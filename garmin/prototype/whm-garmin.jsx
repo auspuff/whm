@@ -1,12 +1,51 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import * as Tone from "tone";
 
-// Load rounded font
-const fontLink = document.createElement("link");
-fontLink.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500&display=swap";
-fontLink.rel = "stylesheet";
-document.head.appendChild(fontLink);
+const GARMIN_FONT = "monospace"; // closest to Garmin's built-in font
 
-const ROUND_FONT = "'Nunito', sans-serif";
+// Beep sounds for state transitions
+function beepShort() {
+  const synth = new Tone.Synth({
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 },
+    volume: -20,
+  }).toDestination();
+  synth.triggerAttackRelease("C5", "16n");
+  setTimeout(() => synth.dispose(), 500);
+}
+
+function beepDouble() {
+  const synth = new Tone.Synth({
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 },
+    volume: -20,
+  }).toDestination();
+  synth.triggerAttackRelease("C5", "16n");
+  setTimeout(() => {
+    synth.triggerAttackRelease("E5", "16n");
+    setTimeout(() => synth.dispose(), 500);
+  }, 150);
+}
+
+function beepHigh() {
+  const synth = new Tone.Synth({
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 },
+    volume: -20,
+  }).toDestination();
+  synth.triggerAttackRelease("G5", "16n");
+  setTimeout(() => synth.dispose(), 500);
+}
+
+function beepLong() {
+  const synth = new Tone.Synth({
+    oscillator: { type: "sine" },
+    envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.1 },
+    volume: -18,
+  }).toDestination();
+  synth.triggerAttackRelease("G4", "8n");
+  setTimeout(() => synth.dispose(), 1000);
+}
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -150,6 +189,7 @@ export default function MorphAnimation() {
   const stoppedAlphaRef = useRef(0); // fade-in for stopped results
   const stoppedStartRef = useRef(0); // when stopped phase began
   const stoppedRadiusRef = useRef(-1); // -1 = not in stopped shrink
+  const lastBeepSecRef = useRef(-1); // track last beeped countdown second
 
   const switchState = useCallback((newState) => {
     const now = performance.now();
@@ -170,6 +210,13 @@ export default function MorphAnimation() {
     phaseRef.current = "transition";
     phaseStartRef.current = now;
     setActiveState(newState);
+
+    // Beep cues
+    Tone.start();
+    if (newState === "breathing") beepShort();
+    if (newState === "retention") beepDouble();
+    if (newState === "recovery") beepShort();
+    if (newState === "stopped") beepLong();
 
     switch (newState) {
       case "start":
@@ -285,32 +332,54 @@ export default function MorphAnimation() {
         }
       } else if (phase === "loop" && state === "breathing") {
         const cycleMs = TRANS_MS * 2;
-        const cycleElapsed = elapsed % cycleMs;
-        breathingCycleElapsedRef.current = cycleElapsed;
-        let t;
-        if (cycleElapsed < TRANS_MS) {
-          t = 1 - easeInOutCubic(cycleElapsed / TRANS_MS);
+        const totalBreaths = 30;
+        const maxElapsed = totalBreaths * cycleMs;
+        
+        // After 3 breaths, switch to retention
+        if (elapsed >= maxElapsed) {
+          breathingCycleElapsedRef.current = 0;
+          stateRef.current = "retention";
+          phaseRef.current = "retention_sequence";
+          phaseStartRef.current = timestamp;
+          retentionFinishMsRef.current = TRANS_MS;
+          setActiveState("retention");
+          // Beep cue
+          Tone.start();
+          beepDouble();
         } else {
-          t = easeInOutCubic((cycleElapsed - TRANS_MS) / TRANS_MS);
+          const cycleElapsed = elapsed % cycleMs;
+          breathingCycleElapsedRef.current = cycleElapsed;
+          let t;
+          if (cycleElapsed < TRANS_MS) {
+            t = 1 - easeInOutCubic(cycleElapsed / TRANS_MS);
+          } else {
+            t = easeInOutCubic((cycleElapsed - TRANS_MS) / TRANS_MS);
+          }
+          scaleRef.current = lerp(SMALL_SCALE, 1, t);
+          morphRef.current = 1;
         }
-        scaleRef.current = lerp(SMALL_SCALE, 1, t);
-        morphRef.current = 1;
       } else if (phase === "hold" && state === "recovery") {
         if (elapsed < 15000) {
           scaleRef.current = 1;
         } else if (elapsed < 15000 + TRANS_MS) {
+          if (scaleRef.current === 1) {
+            Tone.start();
+            beepShort();
+          }
           const t = easeInOutCubic((elapsed - 15000) / TRANS_MS);
           scaleRef.current = lerp(1, SMALL_SCALE, t);
         } else if (elapsed < 15000 + TRANS_MS + 3000) {
           scaleRef.current = SMALL_SCALE;
         } else {
           scaleRef.current = SMALL_SCALE;
-          // Go to breathing state, start loop from small (= TRANS_MS into cycle)
           stateRef.current = "breathing";
           phaseRef.current = "loop";
-          phaseStartRef.current = timestamp - TRANS_MS; // offset so cycle starts at small->big
+          phaseStartRef.current = timestamp - TRANS_MS;
           breathingCycleElapsedRef.current = TRANS_MS;
           setActiveState("breathing");
+          // Beep cue
+          Tone.start();
+          beepShort();
         }
         morphRef.current = 1;
       } else if (phase === "retention_sequence" && state === "retention") {
@@ -397,8 +466,6 @@ export default function MorphAnimation() {
         const currentR = initR * (1 - t);
         if (currentR > 0.5) {
           ctx.save();
-          ctx.shadowColor = "rgba(255, 255, 255, 0.4)";
-          ctx.shadowBlur = 16;
           ctx.beginPath();
           ctx.arc(cx, cy, currentR, 0, Math.PI * 2);
           ctx.strokeStyle = "#ffffff";
@@ -437,7 +504,7 @@ export default function MorphAnimation() {
       if (!isStopped && pillT > 0 && (state === "retention" || state === "recovery" || state === "stopped")) {
         // Measure text to get target pill width
         ctx.save();
-        ctx.font = `600 ${fontSize}px Nunito, sans-serif`;
+        ctx.font = `600 ${fontSize}px monospace`;
         const textToMeasure = retentionTextRef.current || "0";
         const textWidth = ctx.measureText(textToMeasure).width;
         ctx.restore();
@@ -472,8 +539,6 @@ export default function MorphAnimation() {
         // Draw rounded rect
         const glowIntensity = 1;
         ctx.save();
-        ctx.shadowColor = `rgba(255, 255, 255, ${0.25 + glowIntensity * 0.25})`;
-        ctx.shadowBlur = 14 + glowIntensity * 10;
         ctx.beginPath();
         ctx.roundRect(x, y, currentW, currentH, currentRadius);
         ctx.strokeStyle = "#ffffff";
@@ -490,7 +555,7 @@ export default function MorphAnimation() {
         if (pillT > 0.3) {
           const textAlpha = Math.min(1, (pillT - 0.3) / 0.7) * 0.85;
           ctx.save();
-          ctx.font = `600 ${fontSize}px Nunito, sans-serif`;
+          ctx.font = `600 ${fontSize}px monospace`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillStyle = `rgba(255, 255, 255, ${textAlpha})`;
@@ -506,8 +571,6 @@ export default function MorphAnimation() {
         const glowIntensity = morphRef.current;
         ctx.save();
         ctx.globalAlpha = Math.max(0, shapeOpacity);
-        ctx.shadowColor = `rgba(255, 255, 255, ${0.25 + glowIntensity * 0.25})`;
-        ctx.shadowBlur = 14 + glowIntensity * 10;
 
         ctx.beginPath();
         ctx.moveTo(morphed[0].x, morphed[0].y);
@@ -548,6 +611,17 @@ export default function MorphAnimation() {
         const remaining = Math.ceil((15000 - elapsed) / 1000);
         targetText = `${remaining}`;
         targetAlpha = 0.85;
+        // Beep on each new second
+        if (remaining !== lastBeepSecRef.current) {
+          lastBeepSecRef.current = remaining;
+          if (remaining === 1) {
+            beepHigh();
+          } else {
+            beepShort();
+          }
+        }
+      } else {
+        lastBeepSecRef.current = -1;
       }
 
       // Breathing count
@@ -588,7 +662,7 @@ export default function MorphAnimation() {
       // Draw text if visible
       if (textAlphaRef.current > 0.01 && currentTextRef.current) {
         ctx.save();
-        ctx.font = `600 ${fontSize}px Nunito, sans-serif`;
+        ctx.font = `600 ${fontSize}px monospace`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = `rgba(255, 255, 255, ${textAlphaRef.current})`;
@@ -627,13 +701,30 @@ export default function MorphAnimation() {
     color: activeState === name ? "#fff" : "rgba(255,255,255,0.5)",
     cursor: "pointer",
     fontSize: "13px",
-    fontFamily: "Nunito, sans-serif",
+    fontFamily: "monospace",
     fontWeight: 500,
     letterSpacing: "0.5px",
     textTransform: "uppercase",
     transition: "all 0.3s ease",
     outline: "none",
   });
+
+  const watchBtn = {
+    position: "absolute",
+    padding: "4px 10px",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: "4px",
+    background: "rgba(255,255,255,0.04)",
+    color: "rgba(255,255,255,0.3)",
+    cursor: "default",
+    fontSize: "9px",
+    fontFamily: "monospace",
+    fontWeight: 600,
+    letterSpacing: "0.8px",
+    textTransform: "uppercase",
+    outline: "none",
+    whiteSpace: "nowrap",
+  };
 
   return (
     <div
@@ -645,13 +736,43 @@ export default function MorphAnimation() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 0,
       }}
     >
-      <canvas
-        ref={canvasRef}
-        style={{ width: "420px", height: "420px" }}
-      />
+      <div style={{ position: "relative", width: "420px", height: "420px" }}>
+        <canvas
+          ref={canvasRef}
+          style={{ width: "420px", height: "420px", cursor: "pointer" }}
+          onClick={() => {
+            if (activeState === "start") switchState("breathing");
+            else if (activeState === "breathing") switchState("retention");
+            else if (activeState === "retention") switchState("recovery");
+            else if (activeState === "stopped") switchState("start");
+          }}
+        />
+        <div style={{ ...watchBtn, left: "-62px", top: "68px" }}>LIGHT</div>
+        <div style={{ ...watchBtn, left: "-46px", top: "50%", transform: "translateY(-50%)" }}>UP</div>
+        <div style={{ ...watchBtn, left: "-62px", bottom: "68px", cursor: "pointer" }}
+          onClick={() => {
+            if (activeState === "breathing") {
+              switchState("retention");
+            } else if (activeState === "retention") {
+              switchState("recovery");
+            }
+          }}
+        >DOWN</div>
+        <div style={{ ...watchBtn, right: "-88px", top: "68px", cursor: "pointer" }}
+          onClick={() => {
+            if (activeState === "start") {
+              switchState("breathing");
+            } else if (activeState === "stopped") {
+              switchState("start");
+            } else {
+              switchState("stopped");
+            }
+          }}
+        >START/STOP</div>
+        <div style={{ ...watchBtn, right: "-60px", bottom: "68px" }}>BACK</div>
+      </div>
       <div style={{ display: "flex", gap: "12px", marginTop: "24px" }}>
         <button style={btnStyle("start")} onClick={() => switchState("start")}>
           Start
