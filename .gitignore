@@ -1,2 +1,9 @@
 .DS_Store
 garmin/developer_key.der
+
+# Build artifacts
+garmin/whm/gen/
+garmin/whm/mir/
+garmin/whm/internal-mir/
+garmin/whm/whm.prg
+garmin/whm/whm.prg.debug.xml
