@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WHM Breathing – Garmin Prototype</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 100vw; height: 100vh;
+    background: #e8e6e1;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: monospace;
+    overflow: hidden;
+  }
+  .watch-wrap { position: relative; width: 420px; height: 420px; }
+  canvas { width: 420px; height: 420px; cursor: pointer; display: block; }
+  .watch-btn {
+    position: absolute;
+    padding: 4px 10px;
+    border: 1px solid rgba(0,0,0,0.15);
+    border-radius: 4px;
+    background: rgba(0,0,0,0.04);
+    color: rgba(0,0,0,0.35);
+    cursor: default;
+    font: 600 9px/1 monospace;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .watch-btn.clickable { cursor: pointer; }
+  #btn-light { left: -62px; top: 68px; }
+  #btn-up    { left: -46px; top: 50%; transform: translateY(-50%); }
+  #btn-down  { left: -62px; bottom: 68px; }
+  #btn-start { right: -88px; top: 68px; }
+  #btn-back  { right: -60px; bottom: 68px; }
+  .controls { display: flex; gap: 12px; margin-top: 24px; }
+  .ctrl-btn {
+    padding: 10px 20px;
+    border: 1.5px solid rgba(0,0,0,0.2);
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(0,0,0,0.45);
+    cursor: pointer;
+    font: 500 13px/1 monospace;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    transition: all 0.3s ease;
+    outline: none;
+  }
+  .ctrl-btn.active {
+    border-color: #000;
+    background: rgba(0,0,0,0.08);
+    color: #000;
+  }
+</style>
+</head>
+<body>
+
+<div class="watch-wrap">
+  <canvas id="canvas"></canvas>
+  <div class="watch-btn" id="btn-light">LIGHT</div>
+  <div class="watch-btn" id="btn-up">UP</div>
+  <div class="watch-btn clickable" id="btn-down">DOWN</div>
+  <div class="watch-btn clickable" id="btn-start">START/STOP</div>
+  <div class="watch-btn clickable" id="btn-back">BACK</div>
+</div>
+
+<div class="controls">
+  <button class="ctrl-btn active" data-state="start">Start</button>
+  <button class="ctrl-btn" data-state="breathing">Breathing</button>
+  <button class="ctrl-btn" data-state="retention">Retention</button>
+  <button class="ctrl-btn" data-state="recovery">Recovery</button>
+  <button class="ctrl-btn" data-state="stopped">Stopped</button>
+</div>
+
+<script>
+// ── Sound effects (Web Audio API) ─────────────────────────────────────────────
+
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  return audioCtx;
+}
+
+function playTone(freq, attack, decay, vol) {
+  const ctx = getAudioCtx();
+  if (ctx.state === "suspended") ctx.resume();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0, ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + attack);
+  gain.gain.linearRampToValueAtTime(0, ctx.currentTime + attack + decay);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + attack + decay + 0.05);
+}
+
+function beepShort()  { playTone(523.25, 0.005, 0.1, 0.1); }       // C5
+function beepDouble() {
+  playTone(523.25, 0.005, 0.1, 0.1);                                // C5
+  setTimeout(() => playTone(659.25, 0.005, 0.1, 0.1), 150);         // E5
+}
+function beepHigh()   { playTone(783.99, 0.005, 0.1, 0.1); }       // G5
+function beepLong()   { playTone(392.00, 0.01,  0.4, 0.12); }      // G4
+
+// ── Math helpers ──────────────────────────────────────────────────────────────
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+function formatSeconds(s) {
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m + ":" + (r < 10 ? "0" : "") + r + "s";
+}
+
+// ── Timing / animation constants (matching WhmModel.mc) ──────────────────────
+
+const TRANS_MS            = 2000;
+const RECOVERY_TRANS_MS   = 3000;
+const SMALL_SCALE         = 0.25;
+const BREATH_COUNT        = 30;
+const RECOVERY_HOLD_MS    = 15000;
+const RECOVERY_SMALL_WAIT = 6000;
+const STOPPED_SHRINK_MS   = 1000;
+const START_GROW_MS       = 1200;
+const START_MORPH_MS      = 2000;
+const IDLE_SCALE          = 0.3;
+const INTRO_SCALE         = 0.005;
+const RETENTION_HOLD_MS   = 1000;
+
+const PILL_W_R = 200 / 206;
+const PILL_H_R = 74 / 206;
+
+// ── Triangle / polygon geometry ───────────────────────────────────────────────
+
+const TRI_VERTS = [{ x: -0.7, y: -1 }, { x: -0.7, y: 1 }, { x: 1, y: 0 }];
+
+function rayEdgeDist(dx, dy, ax, ay, bx, by) {
+  const ex = bx - ax, ey = by - ay;
+  const denom = dx * ey - dy * ex;
+  if (Math.abs(denom) < 1e-10) return Infinity;
+  const t = (ax * ey - ay * ex) / denom;
+  const u = (ax * dy - ay * dx) / denom;
+  return (t > 0 && u >= 0 && u <= 1) ? t : Infinity;
+}
+
+function getTriangleRadius(angle, r) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  let minD = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const a = TRI_VERTS[i], b = TRI_VERTS[(i + 1) % 3];
+    const d = rayEdgeDist(dx, dy, a.x * r, a.y * r, b.x * r, b.y * r);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+const VERT_ANGLES = TRI_VERTS.map(v => Math.atan2(v.y, v.x));
+const SMOOTH_WINDOW = 2;
+
+function precomputeSmoothedRadii(angles) {
+  const raw = angles.map(a => getTriangleRadius(a, 1));
+  const n = raw.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let sum = 0, cnt = 0;
+    for (let j = -SMOOTH_WINDOW; j <= SMOOTH_WINDOW; j++) {
+      sum += raw[(i + j + n) % n]; cnt++;
+    }
+    out[i] = sum / cnt;
+  }
+  return out;
+}
+
+function buildAngles(numPoints) {
+  const sorted = [...VERT_ANGLES].sort((a, b) => a - b);
+  const arcs = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const from = sorted[i], to = sorted[(i + 1) % sorted.length];
+    arcs.push({ from, span: to > from ? to - from : to - from + 2 * Math.PI });
+  }
+  const rem = numPoints - 3, angles = [];
+  for (const arc of arcs) {
+    angles.push(arc.from);
+    const cnt = Math.round(rem * (arc.span / (2 * Math.PI)));
+    for (let i = 1; i <= cnt; i++) {
+      let ang = arc.from + (i / (cnt + 1)) * arc.span;
+      if (ang > Math.PI) ang -= 2 * Math.PI;
+      angles.push(ang);
+    }
+  }
+  angles.sort((a, b) => a - b);
+  return angles;
+}
+
+const NUM_POINTS = 120;
+const PREBUILT_ANGLES = buildAngles(NUM_POINTS);
+const SMOOTHED_RADII = precomputeSmoothedRadii(PREBUILT_ANGLES);
+
+function getPoints(cx, cy, r, morphT, scale) {
+  const sf = Math.max(0, scale), pts = [];
+  for (let i = 0; i < PREBUILT_ANGLES.length; i++) {
+    const a = PREBUILT_ANGLES[i];
+    const dist = lerp(SMOOTHED_RADII[i] * r, r, morphT) * sf;
+    pts.push({ x: cx + dist * Math.cos(a), y: cy + dist * Math.sin(a) });
+  }
+  return pts;
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let state = "start", phase = "transition", phaseStart = performance.now();
+
+let morph = 1.0, scale = INTRO_SCALE;
+let morphFrom = 1.0, scaleFrom = INTRO_SCALE;
+let morphTo = 0, scaleTo = IDLE_SCALE;
+let pillT = 0, pillFrom = 0;
+
+let retentionFinishMs = 0, breathingCycleElapsed = 0, retentionIdleStart = 0;
+let retentionTimes = [], lastRetentionSecs = 0, lastBeepSec = -1;
+let sessionStartMs = 0, sessionDurationSecs = 0;
+let stoppedInitScale = -1, stoppedInitMorph = -1;
+let textAlpha = 0, currentText = "";
+
+// ── State switching ───────────────────────────────────────────────────────────
+
+function switchState(newState) {
+  const now = performance.now();
+
+  if (state === "retention" && phase === "retention_idle" && retentionIdleStart > 0) {
+    const dur = now - retentionIdleStart;
+    retentionTimes = [...retentionTimes, dur];
+    lastRetentionSecs = Math.floor(dur / 1000);
+  }
+
+  morphFrom = morph; scaleFrom = scale;
+  stoppedInitScale = -1; stoppedInitMorph = -1;
+  pillFrom = pillT;
+
+  state = newState; phase = "transition"; phaseStart = now;
+  updateButtons();
+
+  if (newState === "breathing") beepShort();
+  if (newState === "retention") beepDouble();
+  if (newState === "recovery") beepShort();
+  if (newState === "stopped") beepLong();
+
+  switch (newState) {
+    case "start":
+      morphTo = 0; scaleTo = IDLE_SCALE;
+      morphFrom = 0; scaleFrom = 0;
+      pillT = 0;
+      retentionTimes = []; lastRetentionSecs = 0;
+      sessionStartMs = 0; sessionDurationSecs = 0;
+      break;
+    case "breathing":
+      morphTo = 1; scaleTo = 1; pillT = 0;
+      if (sessionStartMs === 0) sessionStartMs = now;
+      break;
+    case "retention": {
+      morphTo = 1; lastRetentionSecs = 0; retentionIdleStart = 0;
+      const cycleMs = TRANS_MS * 2;
+      const cyclePos = breathingCycleElapsed || 0;
+      retentionFinishMs = cyclePos <= TRANS_MS
+        ? TRANS_MS - cyclePos
+        : cycleMs - cyclePos + TRANS_MS;
+      phase = "retention_sequence";
+      break;
+    }
+    case "recovery":
+      morphTo = 1; scaleTo = 1; pillFrom = pillT;
+      break;
+    case "stopped":
+      morphTo = 1; morph = 1; pillT = 0;
+      phase = "stopped_shrink";
+      if (sessionStartMs > 0)
+        sessionDurationSecs = Math.floor((now - sessionStartMs) / 1000);
+      break;
+  }
+}
+
+// ── Button handlers (matching WhmDelegate.mc) ─────────────────────────────────
+
+function handleAdvance() {
+  if (state === "start") switchState("breathing");
+  else if (state === "breathing") switchState("retention");
+  else if (state === "retention" && phase === "retention_idle") switchState("recovery");
+  else if (state === "stopped") switchState("start");
+}
+
+function handleBack() {
+  if (state === "breathing" || state === "retention" || state === "recovery")
+    switchState("stopped");
+}
+
+// ── UI wiring ─────────────────────────────────────────────────────────────────
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+canvas.addEventListener("click", handleAdvance);
+
+document.getElementById("btn-down").addEventListener("click", () => {
+  if (state === "breathing") switchState("retention");
+  else if (state === "retention" && phase === "retention_idle") switchState("recovery");
+});
+document.getElementById("btn-start").addEventListener("click", () => {
+  if (state === "start") switchState("breathing");
+  else if (state === "stopped") switchState("start");
+  else switchState("stopped");
+});
+document.getElementById("btn-back").addEventListener("click", handleBack);
+
+document.querySelectorAll(".ctrl-btn").forEach(btn => {
+  btn.addEventListener("click", () => switchState(btn.dataset.state));
+});
+
+function updateButtons() {
+  document.querySelectorAll(".ctrl-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.state === state);
+  });
+}
+
+// ── Canvas resize ─────────────────────────────────────────────────────────────
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resize();
+window.addEventListener("resize", resize);
+
+// ── Draw loop ─────────────────────────────────────────────────────────────────
+
+function draw(timestamp) {
+  const rect = canvas.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  const cx = w / 2, cy = h / 2;
+  const r = Math.min(w, h) * 0.3;
+  const elapsed = timestamp - phaseStart;
+
+  // ── Tick ──────────────────────────────────────────────────────────────
+
+  if (phase === "transition") {
+    if (state === "start") {
+      if (elapsed < START_GROW_MS) {
+        const t = easeInOutCubic(clamp01(elapsed / START_GROW_MS));
+        scale = lerp(scaleFrom, 1.0, t);
+        morph = 1.0;
+      } else {
+        const e2 = elapsed - START_GROW_MS;
+        const t = easeInOutCubic(clamp01(e2 / START_MORPH_MS));
+        scale = lerp(1.0, scaleTo, t);
+        morph = lerp(1.0, morphTo, t);
+        if (e2 >= START_MORPH_MS) {
+          scale = scaleTo; morph = morphTo; phase = "idle";
+        }
+      }
+    } else {
+      const dur = state === "recovery" ? RECOVERY_TRANS_MS : TRANS_MS;
+      const t = easeInOutCubic(clamp01(elapsed / dur));
+      morph = lerp(morphFrom, morphTo, t);
+      scale = lerp(scaleFrom, scaleTo, t);
+
+      if ((state === "recovery" || state === "stopped") && pillFrom > 0)
+        pillT = lerp(pillFrom, 0, t);
+
+      if (elapsed >= dur) {
+        morph = morphTo; scale = scaleTo;
+        if (state === "breathing")      { phase = "loop"; phaseStart = timestamp; }
+        else if (state === "recovery")  { phase = "hold"; phaseStart = timestamp; pillT = 0; lastBeepSec = -1; }
+        else if (state === "retention") { phase = "retention_sequence"; phaseStart = timestamp; }
+        else if (state === "stopped")   { phase = "stopped_shrink"; phaseStart = timestamp; pillT = 0; }
+      }
+    }
+  } else if (phase === "loop" && state === "breathing") {
+    const cycleMs = TRANS_MS * 2;
+    const maxElapsed = BREATH_COUNT * cycleMs;
+    if (elapsed >= maxElapsed) {
+      breathingCycleElapsed = 0; switchState("retention");
+    } else {
+      const ce = elapsed % cycleMs;
+      breathingCycleElapsed = ce;
+      const t = ce < TRANS_MS
+        ? 1 - easeInOutCubic(ce / TRANS_MS)
+        : easeInOutCubic((ce - TRANS_MS) / TRANS_MS);
+      scale = lerp(SMALL_SCALE, 1, t);
+      morph = 1;
+    }
+  } else if (phase === "hold" && state === "recovery") {
+    morph = 1;
+    if (elapsed < RECOVERY_HOLD_MS) {
+      scale = 1;
+      const rem = Math.ceil((RECOVERY_HOLD_MS - elapsed) / 1000);
+      if (rem !== lastBeepSec) {
+        lastBeepSec = rem;
+        rem === 1 ? beepHigh() : beepShort();
+      }
+    } else if (elapsed < RECOVERY_HOLD_MS + TRANS_MS) {
+      scale = lerp(1, SMALL_SCALE, easeInOutCubic((elapsed - RECOVERY_HOLD_MS) / TRANS_MS));
+    } else if (elapsed < RECOVERY_HOLD_MS + TRANS_MS + RECOVERY_SMALL_WAIT) {
+      scale = SMALL_SCALE;
+    } else {
+      scale = SMALL_SCALE; switchState("breathing");
+    }
+  } else if (phase === "retention_sequence" && state === "retention") {
+    morph = 1;
+    const fm = retentionFinishMs, cycleMs = TRANS_MS * 2, scp = breathingCycleElapsed;
+    if (elapsed < fm) {
+      const ce = (scp + elapsed) % cycleMs;
+      const t = ce < TRANS_MS
+        ? 1 - easeInOutCubic(ce / TRANS_MS)
+        : easeInOutCubic((ce - TRANS_MS) / TRANS_MS);
+      scale = lerp(SMALL_SCALE, 1, t);
+    } else if (elapsed < fm + TRANS_MS) {
+      scale = lerp(SMALL_SCALE, 1, easeInOutCubic((elapsed - fm) / TRANS_MS));
+      pillT = 0;
+    } else if (elapsed < fm + TRANS_MS + RETENTION_HOLD_MS) {
+      scale = 1; pillT = 0;
+    } else if (elapsed < fm + TRANS_MS + RETENTION_HOLD_MS + TRANS_MS) {
+      const t = easeInOutCubic((elapsed - fm - TRANS_MS - RETENTION_HOLD_MS) / TRANS_MS);
+      scale = lerp(1, SMALL_SCALE, t); pillT = t;
+    } else {
+      scale = SMALL_SCALE; pillT = 1;
+      if (phase !== "retention_idle") {
+        retentionIdleStart = timestamp; phase = "retention_idle";
+      }
+    }
+  } else if (phase === "stopped_shrink" && state === "stopped") {
+    if (stoppedInitScale < 0) { stoppedInitScale = scale; stoppedInitMorph = morph; }
+    if (elapsed >= STOPPED_SHRINK_MS) {
+      scale = INTRO_SCALE; morph = 1;
+      if (retentionTimes.length > 0) { phase = "stopped_idle"; phaseStart = timestamp; }
+      else switchState("start");
+    } else {
+      const t = easeInOutCubic(clamp01(elapsed / STOPPED_SHRINK_MS));
+      scale = lerp(stoppedInitScale, INTRO_SCALE, t);
+      morph = lerp(stoppedInitMorph, 1, t);
+    }
+  }
+
+  // ── Draw ──────────────────────────────────────────────────────────────
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Background circle
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "#000000";
+  ctx.fill();
+
+  const isStopped = state === "stopped" && (phase === "stopped_shrink" || phase === "stopped_idle");
+
+  // ── Stopped shrink ──────────────────────────────────────────────────
+  if (state === "stopped" && phase === "stopped_shrink") {
+    const cr = r * scale;
+    if (cr > 0.5) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+  }
+
+  // ── Stopped idle: results ─────────────────────────────────────────
+  else if (state === "stopped" && phase === "stopped_idle") {
+    if (retentionTimes.length > 0) {
+      const fs = r * 0.2, lh = fs * 1.8;
+      const sessionTimeY = cy + r * 0.58;
+      const totalH = retentionTimes.length * lh;
+      const startY = sessionTimeY / 2 - totalH / 2 + lh / 2;
+
+      ctx.save();
+      ctx.font = "600 " + fs + "px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      for (let i = 0; i < retentionTimes.length; i++)
+        ctx.fillText(formatSeconds(Math.floor(retentionTimes[i] / 1000)), cx, startY + i * lh);
+      ctx.restore();
+
+      if (sessionDurationSecs > 0) {
+        const sf = r * 0.14;
+        ctx.save();
+        ctx.font = "500 " + sf + "px monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fillText(formatSeconds(sessionDurationSecs), cx, sessionTimeY);
+        ctx.restore();
+      }
+    }
+  }
+
+  // ── Pill shape ────────────────────────────────────────────────────
+  else if (pillT > 0 && (state === "retention" || state === "recovery")) {
+    const sc = Math.max(0, scale);
+    const circDiam = r * 2 * sc, circR = r * sc;
+    const tW = r * PILL_W_R, tH = r * PILL_H_R, tC = tH / 2;
+
+    const cW = lerp(circDiam, tW, pillT);
+    const cH = lerp(circDiam, tH, pillT);
+    const cR = lerp(circR, tC, pillT);
+    const x = cx - cW / 2, y = cy - cH / 2;
+
+    ctx.beginPath(); ctx.roundRect(x, y, cW, cH, cR);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5; ctx.stroke();
+
+    ctx.beginPath(); ctx.roundRect(x, y, cW, cH, cR);
+    ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.fill();
+
+    if (state === "recovery" || pillT > 0.3) {
+      let secs;
+      if (state === "retention" && phase === "retention_idle" && retentionIdleStart > 0)
+        secs = Math.floor((timestamp - retentionIdleStart) / 1000);
+      else secs = lastRetentionSecs;
+      const fs = r * 0.22;
+      const ta = state === "recovery" ? 0.85 : Math.min(1, (pillT - 0.3) / 0.7) * 0.85;
+      ctx.save();
+      ctx.font = "600 " + fs + "px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255," + ta + ")";
+      ctx.fillText(formatSeconds(secs), cx, cy);
+      ctx.restore();
+    }
+  }
+
+  // ── Normal polygon ────────────────────────────────────────────────
+  else if (!isStopped) {
+    const pts = getPoints(cx, cy, r, morph, scale);
+    const opacity = Math.min(1, scale / 0.15);
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, opacity);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+    ctx.lineJoin = "miter"; ctx.miterLimit = 20; ctx.lineCap = "round";
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,255,255," + (0.02 + morph * 0.02) + ")";
+    ctx.fill();
+  }
+
+  // ── Text overlays ─────────────────────────────────────────────────
+  const fontSize = r * 0.22;
+  let targetText = "", targetAlpha = 0;
+
+  if (phase === "transition") textAlpha = lerp(textAlpha, 0, 0.15);
+
+  if (state === "recovery" && phase === "hold" && elapsed < RECOVERY_HOLD_MS) {
+    targetText = "" + Math.ceil((RECOVERY_HOLD_MS - elapsed) / 1000);
+    targetAlpha = 0.85;
+  }
+  if (state === "breathing" && phase === "loop") {
+    const bc = Math.floor((elapsed + TRANS_MS) / (TRANS_MS * 2));
+    if (bc > 0) { targetText = "" + bc; targetAlpha = 0.85; }
+  }
+
+  if (targetText && targetAlpha > 0) currentText = targetText;
+  textAlpha = lerp(textAlpha, targetAlpha, targetAlpha > textAlpha ? 0.15 : 0.12);
+
+  if (textAlpha > 0.01 && currentText && !isStopped) {
+    ctx.save();
+    ctx.font = "600 " + fontSize + "px monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,255,255," + textAlpha + ")";
+    ctx.fillText(currentText, cx, cy);
+    ctx.restore();
+  }
+
+  requestAnimationFrame(draw);
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
