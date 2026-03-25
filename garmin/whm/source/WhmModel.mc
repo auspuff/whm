@@ -26,6 +26,11 @@ const BREATH_COUNT        = 30;
 const RECOVERY_HOLD_MS    = 15000;
 const RECOVERY_SMALL_WAIT = 3000;
 const STOPPED_SHRINK_MS   = 1000;
+const START_SETTLE_MS     = 700;
+const START_MORPH_MS      = 2000;
+const IDLE_SCALE          = 0.3f;
+const INTRO_SCALE         = 1.1f;
+const RETENTION_HOLD_MS   = 1000;
 
 // ── Polygon constants ────────────────────────────────────────────────────────
 const NUM_POINTS    = 120;
@@ -43,9 +48,9 @@ class WhmModel {
     var morphCurrent as Float = 1.0f;
     var morphFrom    as Float = 1.0f;
     var morphTo      as Float = 0.0f;
-    var scaleCurrent as Float = 1.1f;
-    var scaleFrom    as Float = 1.1f;
-    var scaleTo      as Float = 0.3f;
+    var scaleCurrent as Float = INTRO_SCALE;
+    var scaleFrom    as Float = INTRO_SCALE;
+    var scaleTo      as Float = IDLE_SCALE;
     var pillT        as Float = 0.0f;
     var pillFrom     as Float = 0.0f;
 
@@ -66,16 +71,19 @@ class WhmModel {
     var hrSamples    as Array = [];
     var spo2Samples  as Array = [];
     var sensorStartMs as Number = 0;
-    const MAX_SAMPLES = 3600;
+    const MAX_SAMPLES = 600;
 
     // ── Results paging (0 = times, 1 = HR, 2 = SpO2) ───────────────────────
     var resultsPage as Number = 0;
 
     // ── Stopped phase ─────────────────────────────────────────────────────────
     var stoppedInitRadius as Float = -1.0f;
+    var stoppedInitMorph  as Float = -1.0f;
 
     // ── Precomputed polygon tables ────────────────────────────────────────────
     var polyAngles   as Array;
+    var polyCos      as Array;
+    var polySin      as Array;
     var polyTriRadii as Array;
     var polygon      as Array;
 
@@ -88,16 +96,26 @@ class WhmModel {
         triY = [-1.0f,  1.0f, 0.0f];
 
         polyAngles   = new [NUM_POINTS];
+        polyCos      = new [NUM_POINTS];
+        polySin      = new [NUM_POINTS];
         polyTriRadii = new [NUM_POINTS];
         polygon      = new [NUM_POINTS];
 
         for (var i = 0; i < NUM_POINTS; i++) {
             polyAngles[i]   = 0.0f;
+            polyCos[i]      = 1.0f;
+            polySin[i]      = 0.0f;
             polyTriRadii[i] = 1.0f;
             polygon[i]      = [0, 0];
         }
 
         _buildAngles();
+        // Precompute trig from final sorted angles
+        for (var i = 0; i < NUM_POINTS; i++) {
+            var a = polyAngles[i] as Float;
+            polyCos[i] = Math.cos(a).toFloat();
+            polySin[i] = Math.sin(a).toFloat();
+        }
         _computeSmoothedRadii();
 
         phaseStartMs = System.getTimer();
@@ -232,14 +250,14 @@ class WhmModel {
 
     function computePolygon(cx as Number, cy as Number, r as Float) as Array {
         var scale = scaleCurrent > 0.0f ? scaleCurrent : 0.0f;
+        var morph = morphCurrent;
         for (var i = 0; i < NUM_POINTS; i++) {
-            var angle  = polyAngles[i] as Float;
             var circR  = r;
             var triR   = (polyTriRadii[i] as Float) * r;
-            var dist   = lerp(triR, circR, morphCurrent) * scale;
+            var dist   = lerp(triR, circR, morph) * scale;
             var pt     = polygon[i] as Array;
-            pt[0] = (cx + dist * Math.cos(angle)).toNumber();
-            pt[1] = (cy + dist * Math.sin(angle)).toNumber();
+            pt[0] = (cx + dist * (polyCos[i] as Float)).toNumber();
+            pt[1] = (cy + dist * (polySin[i] as Float)).toNumber();
         }
         return polygon;
     }
@@ -296,6 +314,7 @@ class WhmModel {
         morphFrom = morphCurrent;
         scaleFrom = scaleCurrent;
         stoppedInitRadius = -1.0f;
+        stoppedInitMorph  = -1.0f;
         pillFrom  = pillT;
 
         state         = newState;
@@ -307,7 +326,7 @@ class WhmModel {
         switch (newState) {
             case STATE_START:
                 morphTo   = 0.0f;
-                scaleTo   = 0.3f;
+                scaleTo   = IDLE_SCALE;
                 morphFrom = 0.0f;
                 scaleFrom = 0.0f;
                 pillT     = 0.0f;
@@ -386,8 +405,8 @@ class WhmModel {
     function _tickTransition(elapsed as Number, nowMs as Number) as Void {
         // START intro: two-stage animation, slower
         if (state == STATE_START) {
-            var stage1Dur = 700;   // 0.7s: circle settle
-            var stage2Dur = 2000;  // 2s: morph to triangle
+            var stage1Dur = START_SETTLE_MS;
+            var stage2Dur = START_MORPH_MS;
             if (elapsed < stage1Dur) {
                 // Stage 1: scale 1.1 → 1.0, stay circle
                 var t = easeInOutCubic(_clamp01(elapsed.toFloat() / stage1Dur.toFloat()));
@@ -507,13 +526,13 @@ class WhmModel {
             scaleCurrent = lerp(SMALL_SCALE, 1.0f, t);
             pillT        = 0.0f;
 
-        } else if (elapsed < finishMs + TRANS_MS + 1000) {
+        } else if (elapsed < finishMs + TRANS_MS + RETENTION_HOLD_MS) {
             scaleCurrent = 1.0f;
             pillT        = 0.0f;
 
-        } else if (elapsed < finishMs + TRANS_MS + 1000 + TRANS_MS) {
+        } else if (elapsed < finishMs + TRANS_MS + RETENTION_HOLD_MS + TRANS_MS) {
             var t = easeInOutCubic(
-                (elapsed - finishMs - TRANS_MS - 1000).toFloat() / TRANS_MS.toFloat()
+                (elapsed - finishMs - TRANS_MS - RETENTION_HOLD_MS).toFloat() / TRANS_MS.toFloat()
             );
             scaleCurrent = lerp(1.0f, SMALL_SCALE, t);
             pillT        = t;
@@ -531,10 +550,11 @@ class WhmModel {
     function _tickStoppedShrink(elapsed as Number, nowMs as Number) as Void {
         if (stoppedInitRadius < 0.0f) {
             stoppedInitRadius = scaleCurrent;
+            stoppedInitMorph  = morphCurrent;
         }
 
         if (elapsed >= STOPPED_SHRINK_MS) {
-            scaleCurrent = 1.1f;
+            scaleCurrent = INTRO_SCALE;
             morphCurrent = 1.0f;
 
             if (retentionTimes.size() > 0) {
@@ -544,10 +564,10 @@ class WhmModel {
                 switchState(STATE_START, nowMs);
             }
         } else {
-            // Expand to 1.1 and morph to circle
+            // Expand to INTRO_SCALE and morph to circle
             var t = easeInOutCubic(elapsed.toFloat() / STOPPED_SHRINK_MS.toFloat());
-            scaleCurrent = lerp(stoppedInitRadius, 1.1f, t);
-            morphCurrent = lerp(morphCurrent, 1.0f, t);
+            scaleCurrent = lerp(stoppedInitRadius, INTRO_SCALE, t);
+            morphCurrent = lerp(stoppedInitMorph, 1.0f, t);
         }
     }
 
@@ -589,8 +609,7 @@ class WhmModel {
         return 0;
     }
 
-    function formatRetentionTime(ms as Number) as String {
-        var totalSecs = ms / 1000;
+    function formatSeconds(totalSecs as Number) as String {
         if (totalSecs < 60) {
             return totalSecs.toString() + "s";
         }

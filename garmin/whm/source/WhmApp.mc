@@ -51,7 +51,11 @@ class WhmApp extends Application.AppBase {
 
     function _startSensors() as Void {
         if (!mSensorsActive) {
-            Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE, Sensor.SENSOR_PULSE_OXIMETRY]);
+            var sensors = [Sensor.SENSOR_HEARTRATE];
+            if (Sensor has :SENSOR_PULSE_OXIMETRY) {
+                sensors.add(Sensor.SENSOR_PULSE_OXIMETRY);
+            }
+            Sensor.setEnabledSensors(sensors);
             Sensor.enableSensorEvents(method(:onSensor));
             mSensorsActive = true;
         }

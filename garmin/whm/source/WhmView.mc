@@ -133,7 +133,7 @@ class WhmView extends WatchUi.View {
         var showText = (mModel.state == STATE_RECOVERY) || (pillT > 0.3f);
         if (showText) {
             var secs     = mModel.getRetentionSeconds();
-            var timeStr  = _formatTime(secs);
+            var timeStr  = mModel.formatSeconds(secs);
             var font     = Graphics.FONT_SMALL;
             dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, cy + 1, font, timeStr,
@@ -169,7 +169,7 @@ class WhmView extends WatchUi.View {
 
         dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
         for (var i = 0; i < times.size(); i++) {
-            var label = mModel.formatRetentionTime(times[i] as Number);
+            var label = mModel.formatSeconds((times[i] as Number) / 1000);
             dc.drawText(cx, startY + i * lineHeight, font, label,
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
@@ -210,16 +210,6 @@ class WhmView extends WatchUi.View {
 
     function _lerpInt(a as Number, b as Number, t as Float) as Number {
         return (a + (b - a).toFloat() * t).toNumber();
-    }
-
-    function _formatTime(totalSecs as Number) as String {
-        if (totalSecs < 60) {
-            return totalSecs.toString() + "s";
-        }
-        var mins = totalSecs / 60;
-        var secs = totalSecs % 60;
-        var secStr = secs < 10 ? "0" + secs.toString() : secs.toString();
-        return mins.toString() + ":" + secStr + "s";
     }
 
     function _drawStoppedText(
@@ -279,15 +269,17 @@ class WhmView extends WatchUi.View {
         dc.drawText(labelX, graphB - labelInset, labelFont, minVal.toString(),
             Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        // Draw line
+        // Draw line — downsample to graphW pixels max
         dc.setColor(lineColor, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(2);
         var n = samples.size();
+        var step = n > graphW ? n / graphW : 1;
+        if (step < 1) { step = 1; }
         var prevX = 0;
         var prevY = 0;
         var hadPrev = false;
 
-        for (var i = 0; i < n; i++) {
+        for (var i = 0; i < n; i += step) {
             var v = samples[i] as Number;
             if (v == 0) {
                 hadPrev = false;
@@ -311,10 +303,7 @@ class WhmView extends WatchUi.View {
     ) as Void {
         var secs = mModel.sessionDurationSecs;
         if (secs <= 0) { return; }
-        var mins = secs / 60;
-        var remSecs = secs % 60;
-        var secStr = remSecs < 10 ? "0" + remSecs.toString() : remSecs.toString();
-        var label = mins.toString() + ":" + secStr + "s";
+        var label = mModel.formatSeconds(secs);
         var y = (cy + r * 0.58f).toNumber();
         dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, y, Graphics.FONT_XTINY, label,
