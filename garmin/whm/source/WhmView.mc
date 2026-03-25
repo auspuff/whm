@@ -18,8 +18,8 @@ class WhmView extends WatchUi.View {
     const COLOR_BLUE       = 0xFF4488FF;
 
     // Pill dimensions (fixed — fits up to "9:59")
-    const PILL_WIDTH  = 140;
-    const PILL_HEIGHT = 64;
+    const PILL_WIDTH  = 200;
+    const PILL_HEIGHT = 80;
 
     function initialize(model as WhmModel) {
         View.initialize();
@@ -134,9 +134,9 @@ class WhmView extends WatchUi.View {
         if (showText) {
             var secs     = mModel.getRetentionSeconds();
             var timeStr  = mModel.formatSeconds(secs);
-            var font     = Graphics.FONT_SMALL;
+            var font     = Graphics.FONT_LARGE;
             dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy + 1, font, timeStr,
+            dc.drawText(cx, cy, font, timeStr,
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
@@ -189,7 +189,7 @@ class WhmView extends WatchUi.View {
             var count = mModel.getBreathCount();
             if (count > 0) {
                 dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(cx, cy, Graphics.FONT_SMALL, count.toString(),
+                dc.drawText(cx, cy, Graphics.FONT_LARGE, count.toString(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             }
             return;
@@ -200,7 +200,7 @@ class WhmView extends WatchUi.View {
             var remaining = mModel.getRecoverySecondsRemaining();
             if (remaining > 0) {
                 dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-                dc.drawText(cx, cy, Graphics.FONT_SMALL, remaining.toString(),
+                dc.drawText(cx, cy, Graphics.FONT_LARGE, remaining.toString(),
                     Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             }
         }
@@ -231,7 +231,7 @@ class WhmView extends WatchUi.View {
 
         // Title
         dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, (cy - r * 0.70f).toNumber(), Graphics.FONT_XTINY, title,
+        dc.drawText(cx, (cy - r * 0.70f).toNumber(), Graphics.FONT_SMALL, title,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         if (maxVal == 0) {
@@ -306,7 +306,7 @@ class WhmView extends WatchUi.View {
         var label = mModel.formatSeconds(secs);
         var y = (cy + r * 0.58f).toNumber();
         dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, y, Graphics.FONT_XTINY, label,
+        dc.drawText(cx, y, Graphics.FONT_SMALL, label,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 

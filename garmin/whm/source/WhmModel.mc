@@ -21,7 +21,7 @@ const PHASE_STOPPED_IDLE   = 6;
 // ── Timing / animation constants ─────────────────────────────────────────────
 const TRANS_MS            = 2000;
 const RECOVERY_TRANS_MS   = 2500;
-const SMALL_SCALE         = 0.18f;
+const SMALL_SCALE         = 0.25f;
 const BREATH_COUNT        = 30;
 const RECOVERY_HOLD_MS    = 15000;
 const RECOVERY_SMALL_WAIT = 3000;
