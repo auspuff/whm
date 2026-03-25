@@ -19,7 +19,7 @@ class WhmView extends WatchUi.View {
 
     // Pill dimensions (fixed — fits up to "9:59")
     const PILL_WIDTH  = 200;
-    const PILL_HEIGHT = 80;
+    const PILL_HEIGHT = 74;
 
     function initialize(model as WhmModel) {
         View.initialize();
@@ -162,10 +162,13 @@ class WhmView extends WatchUi.View {
         var times = mModel.retentionTimes;
         if (times.size() == 0) { return; }
 
-        var font       = Graphics.FONT_SMALL;
+        var font       = Graphics.FONT_MEDIUM;
         var lineHeight = dc.getFontHeight(font) + 6;
         var totalH     = times.size() * lineHeight;
-        var startY     = cy - totalH / 2 + lineHeight / 2;
+        // Center in the space from top of screen to the session time
+        var sessionTimeY = (cy + r * 0.58f).toNumber();
+        var regionCenter = sessionTimeY / 2;
+        var startY     = regionCenter - totalH / 2 + lineHeight / 2;
 
         dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
         for (var i = 0; i < times.size(); i++) {

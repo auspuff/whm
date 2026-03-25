@@ -20,16 +20,16 @@ const PHASE_STOPPED_IDLE   = 6;
 
 // ── Timing / animation constants ─────────────────────────────────────────────
 const TRANS_MS            = 2000;
-const RECOVERY_TRANS_MS   = 2500;
+const RECOVERY_TRANS_MS   = 3000;
 const SMALL_SCALE         = 0.25f;
 const BREATH_COUNT        = 30;
 const RECOVERY_HOLD_MS    = 15000;
-const RECOVERY_SMALL_WAIT = 3000;
+const RECOVERY_SMALL_WAIT = 6000;
 const STOPPED_SHRINK_MS   = 1000;
-const START_SETTLE_MS     = 700;
+const START_GROW_MS       = 1200;
 const START_MORPH_MS      = 2000;
 const IDLE_SCALE          = 0.3f;
-const INTRO_SCALE         = 1.1f;
+const INTRO_SCALE         = 0.005f;
 const RETENTION_HOLD_MS   = 1000;
 
 // ── Polygon constants ────────────────────────────────────────────────────────
@@ -403,22 +403,22 @@ class WhmModel {
     // ── Phase tick helpers ────────────────────────────────────────────────────
 
     function _tickTransition(elapsed as Number, nowMs as Number) as Void {
-        // START intro: two-stage animation, slower
+        // START intro: two-stage animation
         if (state == STATE_START) {
-            var stage1Dur = START_SETTLE_MS;
-            var stage2Dur = START_MORPH_MS;
-            if (elapsed < stage1Dur) {
-                // Stage 1: scale 1.1 → 1.0, stay circle
-                var t = easeInOutCubic(_clamp01(elapsed.toFloat() / stage1Dur.toFloat()));
+            var growDur  = START_GROW_MS;
+            var morphDur = START_MORPH_MS;
+            if (elapsed < growDur) {
+                // Stage 1: tiny dot → full screen, stay circle
+                var t = easeInOutCubic(_clamp01(elapsed.toFloat() / growDur.toFloat()));
                 scaleCurrent = lerp(scaleFrom, 1.0f, t);
                 morphCurrent = 1.0f;
             } else {
                 // Stage 2: scale 1.0 → 0.3, morph circle → triangle
-                var e2 = elapsed - stage1Dur;
-                var t = easeInOutCubic(_clamp01(e2.toFloat() / stage2Dur.toFloat()));
+                var e2 = elapsed - growDur;
+                var t = easeInOutCubic(_clamp01(e2.toFloat() / morphDur.toFloat()));
                 scaleCurrent = lerp(1.0f, scaleTo, t);
                 morphCurrent = lerp(1.0f, morphTo, t);
-                if (e2 >= stage2Dur) {
+                if (e2 >= morphDur) {
                     scaleCurrent = scaleTo;
                     morphCurrent = morphTo;
                 }
