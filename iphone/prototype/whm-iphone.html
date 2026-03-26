@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WHM Breathing – Garmin Prototype</title>
+<title>WHM Breathing – iPhone Prototype</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -16,41 +16,65 @@
     font-family: monospace;
     overflow: hidden;
   }
-  .watch-wrap { position: relative; width: 420px; height: 420px; }
-  .watch-bezel {
-    position: absolute;
-    /* match the canvas circle: r = min(420,420)*0.3 = 126, diameter = 252 */
-    width: 252px; height: 252px;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    border-radius: 50%;
-    pointer-events: none;
+  .phone-wrap {
+    position: relative;
+    width: 280px; height: 607px;
+    border-radius: 40px;
+    background: #1a1a1a;
     box-shadow:
       0 0 0 2px #0a0a0a,
       0 0 0 4px #333,
       0 20px 60px rgba(0,0,0,0.3);
+    padding: 0;
+    overflow: hidden;
   }
-  canvas { width: 420px; height: 420px; cursor: pointer; display: block; }
-  .watch-btn {
+  .phone-bezel {
     position: absolute;
-    padding: 4px 10px;
-    border: 1px solid rgba(0,0,0,0.15);
-    border-radius: 4px;
-    background: rgba(0,0,0,0.04);
-    color: rgba(0,0,0,0.35);
-    cursor: default;
-    font: 600 9px/1 monospace;
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    white-space: nowrap;
-    user-select: none;
+    inset: 0;
+    border-radius: 40px;
+    pointer-events: none;
+    z-index: 10;
   }
-  .watch-btn.clickable { cursor: pointer; }
-  #btn-light { left: -62px; top: 68px; }
-  #btn-up    { left: -46px; top: 50%; transform: translateY(-50%); }
-  #btn-down  { left: -62px; bottom: 68px; }
-  #btn-start { right: -88px; top: 68px; }
-  #btn-back  { right: -60px; bottom: 68px; }
+  /* Dynamic island */
+  .dynamic-island {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 84px; height: 24px;
+    background: #000;
+    border-radius: 12px;
+    z-index: 20;
+  }
+  canvas {
+    width: 280px; height: 607px;
+    display: block;
+    border-radius: 40px;
+    cursor: pointer;
+  }
+  /* Side buttons */
+  .side-btn {
+    position: absolute;
+    background: #333;
+    border-radius: 2px;
+  }
+  .side-btn.left { left: -3px; width: 3px; }
+  .side-btn.right { right: -3px; width: 3px; }
+  #btn-silent  { top: 100px; height: 24px; }
+  #btn-vol-up  { top: 148px; height: 40px; }
+  #btn-vol-down { top: 196px; height: 40px; }
+  #btn-power   { right: -3px; top: 148px; height: 56px; }
+  /* Bottom bar hint */
+  .home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100px; height: 4px;
+    background: rgba(255,255,255,0.25);
+    border-radius: 2px;
+    z-index: 20;
+  }
   .controls { display: flex; gap: 12px; }
   .ctrl-btn {
     padding: 10px 20px;
@@ -74,14 +98,14 @@
 </head>
 <body>
 
-<div class="watch-wrap">
-  <div class="watch-bezel"></div>
+<div class="phone-wrap">
+  <div class="dynamic-island"></div>
   <canvas id="canvas"></canvas>
-  <div class="watch-btn" id="btn-light">LIGHT</div>
-  <div class="watch-btn" id="btn-up">UP</div>
-  <div class="watch-btn clickable" id="btn-down">DOWN</div>
-  <div class="watch-btn clickable" id="btn-start">START/STOP</div>
-  <div class="watch-btn clickable" id="btn-back">BACK</div>
+  <div class="home-indicator"></div>
+  <div class="side-btn left" id="btn-silent"></div>
+  <div class="side-btn left" id="btn-vol-up"></div>
+  <div class="side-btn left" id="btn-vol-down"></div>
+  <div class="side-btn right" id="btn-power"></div>
 </div>
 
 <div class="controls">
@@ -116,13 +140,13 @@ function playTone(freq, attack, decay, vol) {
   osc.stop(ctx.currentTime + attack + decay + 0.05);
 }
 
-function beepShort()  { playTone(523.25, 0.005, 0.1, 0.1); }       // C5
+function beepShort()  { playTone(523.25, 0.005, 0.1, 0.1); }
 function beepDouble() {
-  playTone(523.25, 0.005, 0.1, 0.1);                                // C5
-  setTimeout(() => playTone(659.25, 0.005, 0.1, 0.1), 150);         // E5
+  playTone(523.25, 0.005, 0.1, 0.1);
+  setTimeout(() => playTone(659.25, 0.005, 0.1, 0.1), 150);
 }
-function beepHigh()   { playTone(783.99, 0.005, 0.1, 0.1); }       // G5
-function beepLong()   { playTone(392.00, 0.01,  0.4, 0.12); }      // G4
+function beepHigh()   { playTone(783.99, 0.005, 0.1, 0.1); }
+function beepLong()   { playTone(392.00, 0.01,  0.4, 0.12); }
 
 // ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -304,7 +328,7 @@ function switchState(newState) {
   }
 }
 
-// ── Button handlers (matching WhmDelegate.mc) ─────────────────────────────────
+// ── Button handlers ─────────────────────────────────────────────────────────
 
 function handleAdvance() {
   if (state === "start") switchState("breathing");
@@ -325,17 +349,6 @@ const ctx = canvas.getContext("2d");
 
 canvas.addEventListener("click", handleAdvance);
 
-document.getElementById("btn-down").addEventListener("click", () => {
-  if (state === "breathing") switchState("retention");
-  else if (state === "retention" && phase === "retention_idle") switchState("recovery");
-});
-document.getElementById("btn-start").addEventListener("click", () => {
-  if (state === "start") switchState("breathing");
-  else if (state === "stopped") switchState("start");
-  else switchState("stopped");
-});
-document.getElementById("btn-back").addEventListener("click", handleBack);
-
 document.querySelectorAll(".ctrl-btn").forEach(btn => {
   btn.addEventListener("click", () => switchState(btn.dataset.state));
 });
@@ -348,11 +361,13 @@ function updateButtons() {
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────
 
+const SCREEN_W = 280;
+const SCREEN_H = 607;
+
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * dpr;
-  canvas.height = rect.height * dpr;
+  canvas.width = SCREEN_W * dpr;
+  canvas.height = SCREEN_H * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 resize();
@@ -361,10 +376,9 @@ window.addEventListener("resize", resize);
 // ── Draw loop ─────────────────────────────────────────────────────────────────
 
 function draw(timestamp) {
-  const rect = canvas.getBoundingClientRect();
-  const w = rect.width, h = rect.height;
+  const w = SCREEN_W, h = SCREEN_H;
   const cx = w / 2, cy = h / 2;
-  const r = Math.min(w, h) * 0.3;
+  const r = Math.min(w, h) * 0.38;
   const elapsed = timestamp - phaseStart;
 
   // ── Tick ──────────────────────────────────────────────────────────────
@@ -471,11 +485,9 @@ function draw(timestamp) {
 
   ctx.clearRect(0, 0, w, h);
 
-  // Background circle
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  // iPhone screen background
   ctx.fillStyle = "#000000";
-  ctx.fill();
+  ctx.fillRect(0, 0, w, h);
 
   const isStopped = state === "stopped" && (phase === "stopped_shrink" || phase === "stopped_idle");
 
@@ -493,8 +505,8 @@ function draw(timestamp) {
   // ── Stopped idle: results ─────────────────────────────────────────
   else if (state === "stopped" && phase === "stopped_idle") {
     if (retentionTimes.length > 0) {
-      const fs = r * 0.2, lh = fs * 1.8;
-      const sessionTimeY = cy + r * 0.58;
+      const fs = r * 0.22, lh = fs * 1.8;
+      const sessionTimeY = cy + r * 0.7;
       const totalH = retentionTimes.length * lh;
       const startY = sessionTimeY / 2 - totalH / 2 + lh / 2;
 
@@ -507,7 +519,7 @@ function draw(timestamp) {
       ctx.restore();
 
       if (sessionDurationSecs > 0) {
-        const sf = r * 0.14;
+        const sf = r * 0.16;
         ctx.save();
         ctx.font = "500 " + sf + "px monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
