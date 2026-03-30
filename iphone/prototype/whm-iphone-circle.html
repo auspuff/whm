@@ -173,8 +173,7 @@ const RECOVERY_HOLD_MS    = 15000;
 const RECOVERY_SMALL_WAIT = 6000;
 const STOPPED_SHRINK_MS   = 1000;
 const START_GROW_MS       = 1200;
-const START_SETTLE_MS     = 2000;
-const BREATHE_LAUNCH_MS   = 1800;
+const START_MORPH_MS      = 2000;
 const IDLE_SCALE          = 0.3;
 const INTRO_SCALE         = 0.005;
 const RETENTION_HOLD_MS   = 1000;
@@ -247,59 +246,11 @@ const NUM_POINTS = 120;
 const PREBUILT_ANGLES = buildAngles(NUM_POINTS);
 const SMOOTHED_RADII = precomputeSmoothedRadii(PREBUILT_ANGLES);
 
-// ── Screen dimensions ────────────────────────────────────────────────────────
-
-const SCREEN_W = 280;
-const SCREEN_H = 607;
-
-// ── Rounded-rect geometry (iPhone screen shape) ─────────────────────────────
-
-const RECT_INSET = 4;
-const RECT_HW = SCREEN_W / 2 - RECT_INSET;   // half-width with padding
-const RECT_HH = SCREEN_H / 2 - RECT_INSET;   // half-height with padding
-const RECT_CR = 36;                            // corner radius (matches screen)
-const RECT_BASE_R = RECT_HW;                   // baseline circle radius
-
-function getRoundedRectRadius(angle) {
-  const dx = Math.cos(angle), dy = Math.sin(angle);
-  let minT = Infinity;
-  // Straight edges
-  if (dx > 1e-10)  { const t = RECT_HW / dx;  if (Math.abs(t * dy) <= RECT_HH - RECT_CR) minT = t; }
-  if (dx < -1e-10) { const t = -RECT_HW / dx; if (Math.abs(t * dy) <= RECT_HH - RECT_CR) minT = t; }
-  if (dy > 1e-10)  { const t = RECT_HH / dy;  if (Math.abs(t * dx) <= RECT_HW - RECT_CR) minT = t; }
-  if (dy < -1e-10) { const t = -RECT_HH / dy; if (Math.abs(t * dx) <= RECT_HW - RECT_CR) minT = t; }
-  // Corner arcs
-  for (const ccx of [RECT_HW - RECT_CR, -(RECT_HW - RECT_CR)]) {
-    for (const ccy of [RECT_HH - RECT_CR, -(RECT_HH - RECT_CR)]) {
-      const b = -2 * (ccx * dx + ccy * dy);
-      const c = ccx * ccx + ccy * ccy - RECT_CR * RECT_CR;
-      const disc = b * b - 4 * c;
-      if (disc < 0) continue;
-      const sq = Math.sqrt(disc);
-      for (const t of [(-b - sq) / 2, (-b + sq) / 2]) {
-        if (t > 0 && t < minT) {
-          if ((ccx > 0 ? t * dx >= RECT_HW - RECT_CR : t * dx <= -(RECT_HW - RECT_CR)) &&
-              (ccy > 0 ? t * dy >= RECT_HH - RECT_CR : t * dy <= -(RECT_HH - RECT_CR)))
-            minT = t;
-        }
-      }
-    }
-  }
-  return minT;
-}
-
-const RECT_RADII = PREBUILT_ANGLES.map(getRoundedRectRadius);
-
-function getPoints(cx, cy, morphT, scale, rectBlendOverride) {
-  const sf = Math.max(0, scale);
-  const rectBlend = rectBlendOverride !== undefined
-    ? rectBlendOverride
-    : easeInOutCubic(clamp01((sf - 0.2) / 0.8));
-  const pts = [];
+function getPoints(cx, cy, r, morphT, scale) {
+  const sf = Math.max(0, scale), pts = [];
   for (let i = 0; i < PREBUILT_ANGLES.length; i++) {
     const a = PREBUILT_ANGLES[i];
-    const fullR = lerp(RECT_BASE_R, RECT_RADII[i], rectBlend);
-    const dist = lerp(SMOOTHED_RADII[i] * RECT_BASE_R, fullR, morphT) * sf;
+    const dist = lerp(SMOOTHED_RADII[i] * r, r, morphT) * sf;
     pts.push({ x: cx + dist * Math.cos(a), y: cy + dist * Math.sin(a) });
   }
   return pts;
@@ -309,7 +260,7 @@ function getPoints(cx, cy, morphT, scale, rectBlendOverride) {
 
 let state = "start", phase = "transition", phaseStart = performance.now();
 
-let morph = 1.0, scale = INTRO_SCALE, rectBlend = -1;
+let morph = 1.0, scale = INTRO_SCALE;
 let morphFrom = 1.0, scaleFrom = INTRO_SCALE;
 let morphTo = 0, scaleTo = IDLE_SCALE;
 let pillT = 0, pillFrom = 0;
@@ -410,6 +361,9 @@ function updateButtons() {
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────
 
+const SCREEN_W = 280;
+const SCREEN_H = 607;
+
 function resize() {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = SCREEN_W * dpr;
@@ -424,7 +378,7 @@ window.addEventListener("resize", resize);
 function draw(timestamp) {
   const w = SCREEN_W, h = SCREEN_H;
   const cx = w / 2, cy = h / 2;
-  const uiR = Math.min(w, h) * 0.38;
+  const r = Math.min(w, h) * 0.38;
   const elapsed = timestamp - phaseStart;
 
   // ── Tick ──────────────────────────────────────────────────────────────
@@ -432,37 +386,19 @@ function draw(timestamp) {
   if (phase === "transition") {
     if (state === "start") {
       if (elapsed < START_GROW_MS) {
-        // Phase 1: grow from dot to full-screen rect
         const t = easeInOutCubic(clamp01(elapsed / START_GROW_MS));
         scale = lerp(scaleFrom, 1.0, t);
-        morph = 1.0; rectBlend = -1;
+        morph = 1.0;
       } else {
-        // Phase 2: single smooth timeline — rect dissolves to circle,
-        // then circle morphs to triangle, all while shrinking
         const e2 = elapsed - START_GROW_MS;
-        const t = clamp01(e2 / START_SETTLE_MS);
-        scale = lerp(1.0, scaleTo, easeInOutCubic(t));
-        rectBlend = lerp(1.0, 0, easeInOutCubic(clamp01(t / 0.2)));
-        const mp = clamp01((t - 0.3) / 0.7);
-        morph = lerp(1.0, morphTo, easeInOutCubic(mp));
-        if (e2 >= START_SETTLE_MS) {
-          scale = scaleTo; morph = morphTo; rectBlend = -1; phase = "idle";
+        const t = easeInOutCubic(clamp01(e2 / START_MORPH_MS));
+        scale = lerp(1.0, scaleTo, t);
+        morph = lerp(1.0, morphTo, t);
+        if (e2 >= START_MORPH_MS) {
+          scale = scaleTo; morph = morphTo; phase = "idle";
         }
       }
-    } else if (state === "breathing" && morphFrom < 0.5) {
-      // Coming from triangle: single smooth timeline —
-      // triangle morphs to circle, then circle grows to fill screen
-      const t = clamp01(elapsed / BREATHE_LAUNCH_MS);
-      scale = lerp(scaleFrom, scaleTo, easeInOutCubic(t));
-      const mp = clamp01((t - 0.15) / 0.45);
-      morph = lerp(morphFrom, 1, easeInOutCubic(mp));
-      rectBlend = lerp(0, 1, easeInOutCubic(clamp01((t - 0.55) / 0.45)));
-      if (elapsed >= BREATHE_LAUNCH_MS) {
-        morph = morphTo; scale = scaleTo; rectBlend = -1;
-        phase = "loop"; phaseStart = timestamp;
-      }
     } else {
-      rectBlend = -1;
       const dur = state === "recovery" ? RECOVERY_TRANS_MS : TRANS_MS;
       const t = easeInOutCubic(clamp01(elapsed / dur));
       morph = lerp(morphFrom, morphTo, t);
@@ -553,13 +489,24 @@ function draw(timestamp) {
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, w, h);
 
-  const isStoppedIdle = state === "stopped" && phase === "stopped_idle";
+  const isStopped = state === "stopped" && (phase === "stopped_shrink" || phase === "stopped_idle");
+
+  // ── Stopped shrink ──────────────────────────────────────────────────
+  if (state === "stopped" && phase === "stopped_shrink") {
+    const cr = r * scale;
+    if (cr > 0.5) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+  }
 
   // ── Stopped idle: results ─────────────────────────────────────────
-  if (isStoppedIdle) {
+  else if (state === "stopped" && phase === "stopped_idle") {
     if (retentionTimes.length > 0) {
-      const fs = uiR * 0.22, lh = fs * 1.8;
-      const sessionTimeY = cy + uiR * 0.7;
+      const fs = r * 0.22, lh = fs * 1.8;
+      const sessionTimeY = cy + r * 0.7;
       const totalH = retentionTimes.length * lh;
       const startY = sessionTimeY / 2 - totalH / 2 + lh / 2;
 
@@ -572,7 +519,7 @@ function draw(timestamp) {
       ctx.restore();
 
       if (sessionDurationSecs > 0) {
-        const sf = uiR * 0.16;
+        const sf = r * 0.16;
         ctx.save();
         ctx.font = "500 " + sf + "px monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -586,8 +533,8 @@ function draw(timestamp) {
   // ── Pill shape ────────────────────────────────────────────────────
   else if (pillT > 0 && (state === "retention" || state === "recovery")) {
     const sc = Math.max(0, scale);
-    const circDiam = RECT_BASE_R * 2 * sc, circR = RECT_BASE_R * sc;
-    const tW = uiR * PILL_W_R, tH = uiR * PILL_H_R, tC = tH / 2;
+    const circDiam = r * 2 * sc, circR = r * sc;
+    const tW = r * PILL_W_R, tH = r * PILL_H_R, tC = tH / 2;
 
     const cW = lerp(circDiam, tW, pillT);
     const cH = lerp(circDiam, tH, pillT);
@@ -605,7 +552,7 @@ function draw(timestamp) {
       if (state === "retention" && phase === "retention_idle" && retentionIdleStart > 0)
         secs = Math.floor((timestamp - retentionIdleStart) / 1000);
       else secs = lastRetentionSecs;
-      const fs = uiR * 0.22;
+      const fs = r * 0.22;
       const ta = state === "recovery" ? 0.85 : Math.min(1, (pillT - 0.3) / 0.7) * 0.85;
       ctx.save();
       ctx.font = "600 " + fs + "px monospace";
@@ -617,8 +564,8 @@ function draw(timestamp) {
   }
 
   // ── Normal polygon ────────────────────────────────────────────────
-  else if (!isStoppedIdle) {
-    const pts = getPoints(cx, cy, morph, scale, rectBlend >= 0 ? rectBlend : undefined);
+  else if (!isStopped) {
+    const pts = getPoints(cx, cy, r, morph, scale);
     const opacity = Math.min(1, scale / 0.15);
 
     ctx.save();
@@ -641,7 +588,7 @@ function draw(timestamp) {
   }
 
   // ── Text overlays ─────────────────────────────────────────────────
-  const fontSize = uiR * 0.22;
+  const fontSize = r * 0.22;
   let targetText = "", targetAlpha = 0;
 
   if (phase === "transition") textAlpha = lerp(textAlpha, 0, 0.15);
@@ -658,7 +605,7 @@ function draw(timestamp) {
   if (targetText && targetAlpha > 0) currentText = targetText;
   textAlpha = lerp(textAlpha, targetAlpha, targetAlpha > textAlpha ? 0.15 : 0.12);
 
-  if (textAlpha > 0.01 && currentText && !isStoppedIdle) {
+  if (textAlpha > 0.01 && currentText && !isStopped) {
     ctx.save();
     ctx.font = "600 " + fontSize + "px monospace";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
