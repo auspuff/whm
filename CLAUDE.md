@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Wim Hof Method breathing app for the Garmin Fenix 8 43mm, written in Monkey C (Connect IQ SDK). There is also a React/Canvas prototype in `garmin/prototype/whm-garmin.jsx` that served as the reference implementation.
+A Wim Hof Method breathing app for the Garmin Fenix 8 43mm, written in Monkey C (Connect IQ SDK). There are also HTML/Canvas prototypes:
+
+- `garmin/prototype/whm-garmin.html` — Garmin watch prototype (reference implementation for the Monkey C app)
+- `iphone/prototype/whm-iphone.html` — iPhone prototype
+- `iphone/prototype/whm-iphone-circle.html` — iPhone prototype (circle variant)
 
 ## Build & Deploy
 

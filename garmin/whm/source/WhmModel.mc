@@ -71,6 +71,8 @@ class WhmModel {
     var hrSamples    as Array = [];
     var spo2Samples  as Array = [];
     var sensorStartMs as Number = 0;
+    var sampleSkip   as Number = 0;
+    var sampleRate   as Number = 1;
     const MAX_SAMPLES = 600;
 
     // ── Results paging (0 = times, 1 = HR, 2 = SpO2) ───────────────────────
@@ -265,9 +267,27 @@ class WhmModel {
     // ── Sensor recording ──────────────────────────────────────────────────────
 
     function addSensorSample(hr as Number, spo2 as Number) as Void {
-        if (hrSamples.size() >= MAX_SAMPLES) { return; }
-        hrSamples.add(hr);
-        spo2Samples.add(spo2);
+        if (hrSamples.size() >= MAX_SAMPLES) {
+            _downsampleHalf();
+        }
+        sampleSkip++;
+        if (sampleSkip >= sampleRate) {
+            sampleSkip = 0;
+            hrSamples.add(hr);
+            spo2Samples.add(spo2);
+        }
+    }
+
+    function _downsampleHalf() as Void {
+        var newHr = [];
+        var newSpo2 = [];
+        for (var i = 0; i < hrSamples.size(); i += 2) {
+            newHr.add(hrSamples[i]);
+            newSpo2.add(spo2Samples[i]);
+        }
+        hrSamples = newHr;
+        spo2Samples = newSpo2;
+        sampleRate *= 2;
     }
 
     function _sensorStats(samples as Array) as Array {
@@ -333,6 +353,8 @@ class WhmModel {
                 retentionTimes = [];
                 hrSamples      = [];
                 spo2Samples    = [];
+                sampleSkip     = 0;
+                sampleRate     = 1;
                 resultsPage    = 0;
                 sessionStartMs      = 0;
                 sessionDurationSecs = 0;
