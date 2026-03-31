@@ -607,7 +607,10 @@ class WhmModel {
         if (state == STATE_BREATHING && phase == PHASE_LOOP) {
             var cycleMs  = TRANS_MS * 2;
             var elapsed  = System.getTimer() - phaseStartMs;
-            return (elapsed + TRANS_MS) / cycleMs;
+            var done = (elapsed + TRANS_MS) / cycleMs;
+            var remaining = BREATH_COUNT - done;
+            if (remaining < 0) { remaining = 0; }
+            return remaining;
         }
         return 0;
     }

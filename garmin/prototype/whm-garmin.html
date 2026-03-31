@@ -586,8 +586,9 @@ function draw(timestamp) {
     targetAlpha = 0.85;
   }
   if (state === "breathing" && phase === "loop") {
-    const bc = Math.floor((elapsed + TRANS_MS) / (TRANS_MS * 2));
-    if (bc > 0) { targetText = "" + bc; targetAlpha = 0.85; }
+    const done = Math.floor((elapsed + TRANS_MS) / (TRANS_MS * 2));
+    const remaining = BREATH_COUNT - done;
+    if (remaining >= 0) { targetText = "" + remaining; targetAlpha = 0.85; }
   }
 
   if (targetText && targetAlpha > 0) currentText = targetText;
