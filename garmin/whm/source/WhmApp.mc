@@ -13,10 +13,10 @@ class WhmApp extends Application.AppBase {
     var mModel as WhmModel;
     var mTimer as Timer.Timer;
     var mSensorsActive as Boolean = false;
-    var mSession = null;
-    var mFieldRetention = null;
-    var mFieldRounds = null;
-    var mFieldAvgRetention = null;
+    var mSession as ActivityRecording.Session? = null;
+    var mFieldRetention as FitContributor.Field? = null;
+    var mFieldRounds as FitContributor.Field? = null;
+    var mFieldAvgRetention as FitContributor.Field? = null;
     var mLastState as Number = STATE_START;
     var mLastRoundCount as Number = 0;
 
@@ -77,39 +77,49 @@ class WhmApp extends Application.AppBase {
     }
 
     function _startRecording() as Void {
-        mSession = ActivityRecording.createSession({
+        if (!(Toybox has :ActivityRecording)) { return; }
+        var session = ActivityRecording.createSession({
             :name => "WHM",
             :sport => Activity.SPORT_TRAINING,
             :subSport => Activity.SUB_SPORT_BREATHING
         });
-        mFieldRetention = mSession.createField("retention_ms", 0,
+        mSession = session;
+        mFieldRetention = session.createField("retention_ms", 0,
             FitContributor.DATA_TYPE_UINT32,
             {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "ms"});
-        mFieldRounds = mSession.createField("rounds", 1,
+        mFieldRounds = session.createField("rounds", 1,
             FitContributor.DATA_TYPE_UINT16,
             {:mesgType => FitContributor.MESG_TYPE_SESSION});
-        mFieldAvgRetention = mSession.createField("avg_retention_ms", 2,
+        mFieldAvgRetention = session.createField("avg_retention_ms", 2,
             FitContributor.DATA_TYPE_UINT32,
             {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms"});
         mLastRoundCount = 0;
-        mSession.start();
+        session.start();
     }
 
     function _stopRecording() as Void {
+        var session = mSession;
+        if (session == null) { return; }
         var times = mModel.retentionTimes;
         var count = times.size();
-        mFieldRounds.setData(count);
-        if (count > 0) {
-            var sum = 0;
-            for (var i = 0; i < count; i++) {
-                sum += times[i] as Number;
+        var rounds = mFieldRounds;
+        if (rounds != null) { rounds.setData(count); }
+        var avg = mFieldAvgRetention;
+        if (avg != null) {
+            if (count > 0) {
+                var sum = 0;
+                for (var i = 0; i < count; i++) {
+                    sum += times[i] as Number;
+                }
+                avg.setData(sum / count);
+            } else {
+                avg.setData(0);
             }
-            mFieldAvgRetention.setData(sum / count);
-        } else {
-            mFieldAvgRetention.setData(0);
         }
-        mSession.stop();
-        mSession.save();
+        if (session.isRecording()) {
+            session.stop();
+            session.save();
+        }
         mSession = null;
         mFieldRetention = null;
         mFieldRounds = null;
@@ -117,10 +127,15 @@ class WhmApp extends Application.AppBase {
     }
 
     function _addLap() as Void {
-        var times = mModel.retentionTimes;
-        var latest = times[times.size() - 1] as Number;
-        mFieldRetention.setData(latest);
-        mSession.addLap();
+        var session = mSession;
+        if (session == null) { return; }
+        var retention = mFieldRetention;
+        if (retention != null) {
+            var times = mModel.retentionTimes;
+            var latest = times[times.size() - 1] as Number;
+            retention.setData(latest);
+        }
+        session.addLap();
     }
 
     function _startSensors() as Void {
