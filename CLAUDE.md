@@ -44,21 +44,23 @@ mtp-sendfile garmin/whm/whm.prg 16777226
 
 Folder ID `16777226` is `GARMIN/Apps/` on the watch. Requires `libmtp` (`brew install libmtp`).
 
+Because the manifest declares the `Fit` permission, Fenix 8 classifies the app as an activity profile rather than a CIQ app. After sideloading it won't appear in the Connect IQ app drawer — add it via **Settings → Activities & Apps → Add Activity → Connect IQ → WHM**, then launch from the START activity picker.
+
 ## Architecture
 
 The app is in `garmin/whm/source/` with 5 files following a Model-View-Delegate pattern:
 
-- **WhmApp.mc** — App lifecycle. Owns a 50ms repeating `Timer` that calls `model.tick()` then `WatchUi.requestUpdate()`.
+- **WhmApp.mc** — App lifecycle. Owns a 50ms repeating `Timer` that calls `model.tick()` then `WatchUi.requestUpdate()`. Also drives the FIT recording lifecycle: creates an `ActivityRecording.Session` on STATE_START → STATE_BREATHING, adds a lap per completed retention round (with a `retention_ms` custom field), and stops/saves with `rounds` and `avg_retention_ms` session fields on the transition to STATE_STOPPED or in `onStop`.
 - **WhmModel.mc** — All state, animation math, and timing. Contains the state machine (5 states, 7 phases), polygon precomputation for the morphing shape (60 points), and easing functions. This is the most complex file.
 - **WhmView.mc** — Rendering only, no state mutation. Draws the morphing polygon, pill shape (retention timer), and text overlays via `dc.*` calls in `onUpdate()`.
-- **WhmDelegate.mc** — Input handling via `BehaviorDelegate`. Maps `onSelect` (tap/START), `onNextPage` (DOWN), and `onBack` (BACK) to state advances or session stop.
+- **WhmDelegate.mc** — Input handling via `BehaviorDelegate`, mapped to Garmin activity conventions: `onSelect` (START/STOP) toggles between start screen, running session, and stopped results; `onBack` (BACK/LAP) advances phases during a session (BREATHING → RETENTION → RECOVERY) and exits the app from the start/stopped screens; `onNextPage`/`onPreviousPage` (DOWN/UP) page through results when stopped; `onTap` is consumed to disable screen-tap input.
 - **WhmTones.mc** — Wraps `Attention.playTone()` and `Attention.vibrate()` for audio/haptic cues.
 
 ### State Machine
 
 ```
 START → BREATHING → RETENTION → RECOVERY → (auto loops back to BREATHING)
-                                          ↘ STOPPED (via BACK button)
+                                          ↘ STOPPED (via START/STOP button)
 ```
 
 Each state has sub-phases (e.g., BREATHING has TRANSITION then LOOP; RETENTION has RETENTION_SEQ then RETENTION_IDLE). All timing logic lives in `WhmModel.tick()`.
