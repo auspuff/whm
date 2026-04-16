@@ -17,6 +17,7 @@ class WhmApp extends Application.AppBase {
     var mFieldRetention as FitContributor.Field? = null;
     var mFieldRounds as FitContributor.Field? = null;
     var mFieldAvgRetention as FitContributor.Field? = null;
+    var mFieldSpo2 as FitContributor.Field? = null;
     var mLastState as Number = STATE_START;
     var mLastRoundCount as Number = 0;
 
@@ -74,6 +75,10 @@ class WhmApp extends Application.AppBase {
             spo2 = info.oxygenSaturation as Number;
         }
         mModel.addSensorSample(hr, spo2);
+        var spo2Field = mFieldSpo2;
+        if (spo2Field != null && spo2 > 0) {
+            spo2Field.setData(spo2);
+        }
     }
 
     function _startRecording() as Void {
@@ -93,6 +98,9 @@ class WhmApp extends Application.AppBase {
         mFieldAvgRetention = session.createField("avg_retention_ms", 2,
             FitContributor.DATA_TYPE_UINT32,
             {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms"});
+        mFieldSpo2 = session.createField("spo2", 3,
+            FitContributor.DATA_TYPE_UINT8,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "%"});
         mLastRoundCount = 0;
         session.start();
     }
@@ -124,6 +132,7 @@ class WhmApp extends Application.AppBase {
         mFieldRetention = null;
         mFieldRounds = null;
         mFieldAvgRetention = null;
+        mFieldSpo2 = null;
     }
 
     function _addLap() as Void {
