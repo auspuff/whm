@@ -53,6 +53,13 @@ class WhmView extends WatchUi.View {
             return;
         }
 
+        // ── Stopped options menu (Save / Delete / Continue) ─────────────────
+        if (state == STATE_STOPPED && phase == PHASE_STOPPED_OPTIONS) {
+            _drawStoppedOptions(dc, cx, cy, r);
+            _drawSessionTime(dc, cx, cy, r);
+            return;
+        }
+
         // ── Stopped idle — pageable results ─────────────────────────────────
         if (state == STATE_STOPPED && phase == PHASE_STOPPED_IDLE) {
             var page = mModel.resultsPage;
@@ -177,6 +184,48 @@ class WhmView extends WatchUi.View {
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
 
+    }
+
+    // ── Stopped options menu (save / delete / continue) ──────────────────────
+
+    function _drawStoppedOptions(
+        dc as Graphics.Dc, cx as Number, cy as Number, r as Float
+    ) as Void {
+        var labels = ["Save", "Delete", "Continue"];
+        var font   = Graphics.FONT_MEDIUM;
+        var lineHeight = dc.getFontHeight(font) + 10;
+        var totalH     = 3 * lineHeight;
+
+        var footerY = (cy + r * 0.58f).toNumber();
+        var regionCenter = footerY / 2;
+        var startY = regionCenter - totalH / 2 + lineHeight / 2;
+
+        var active = mModel.stoppedOption;
+        for (var i = 0; i < 3; i++) {
+            var y = startY + i * lineHeight;
+            if (i == active) {
+                dc.setColor(COLOR_WHITE_FULL, Graphics.COLOR_TRANSPARENT);
+            } else {
+                dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
+            }
+            dc.drawText(cx, y, font, labels[i],
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            if (i == active) {
+                var textW = dc.getTextDimensions(labels[i], font)[0];
+                var tipX = cx - textW / 2 - 10;
+                _drawOptionIndicator(dc, tipX, y);
+            }
+        }
+    }
+
+    // Right-pointing triangle indicator; tip at (tipX, y)
+    function _drawOptionIndicator(
+        dc as Graphics.Dc, tipX as Number, y as Number
+    ) as Void {
+        var halfH = 9;
+        var w     = 12;
+        dc.setColor(COLOR_WHITE_FULL, Graphics.COLOR_TRANSPARENT);
+        dc.fillPolygon([[tipX, y], [tipX - w, y - halfH], [tipX - w, y + halfH]]);
     }
 
     // ── Text overlays ─────────────────────────────────────────────────────────

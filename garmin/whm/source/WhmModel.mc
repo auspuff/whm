@@ -15,8 +15,13 @@ const PHASE_LOOP           = 1;
 const PHASE_HOLD           = 2;
 const PHASE_RETENTION_SEQ  = 3;
 const PHASE_RETENTION_IDLE = 4;
-const PHASE_STOPPED_SHRINK = 5;
-const PHASE_STOPPED_IDLE   = 6;
+const PHASE_STOPPED_SHRINK  = 5;
+const PHASE_STOPPED_IDLE    = 6;
+const PHASE_STOPPED_OPTIONS = 7;
+
+const STOPPED_OPTION_SAVE     = 0;
+const STOPPED_OPTION_DELETE   = 1;
+const STOPPED_OPTION_CONTINUE = 2;
 
 // ── Timing / animation constants ─────────────────────────────────────────────
 const TRANS_MS            = 2000;
@@ -77,6 +82,9 @@ class WhmModel {
 
     // ── Results paging (0 = times, 1 = HR, 2 = SpO2) ───────────────────────
     var resultsPage as Number = 0;
+
+    // ── Stopped-options highlight (0 = Save, 1 = Delete, 2 = Continue) ─────
+    var stoppedOption as Number = 0;
 
     // ── Stopped phase ─────────────────────────────────────────────────────────
     var stoppedInitRadius as Float = -1.0f;
@@ -321,6 +329,22 @@ class WhmModel {
         resultsPage = (resultsPage + 2) % 3;
     }
 
+    // ── Stopped-options navigation ──────────────────────────────────────────
+
+    function nextStoppedOption() as Void {
+        stoppedOption = (stoppedOption + 1) % 3;
+    }
+
+    function prevStoppedOption() as Void {
+        stoppedOption = (stoppedOption + 2) % 3;
+    }
+
+    function showStoppedResults(nowMs as Number) as Void {
+        phase        = PHASE_STOPPED_IDLE;
+        phaseStartMs = nowMs;
+        resultsPage  = 0;
+    }
+
     // ── State switching ───────────────────────────────────────────────────────
 
     function switchState(newState as Number, nowMs as Number) as Void {
@@ -356,6 +380,7 @@ class WhmModel {
                 sampleSkip     = 0;
                 sampleRate     = 1;
                 resultsPage    = 0;
+                stoppedOption  = 0;
                 sessionStartMs      = 0;
                 sessionDurationSecs = 0;
                 break;
@@ -392,11 +417,12 @@ class WhmModel {
                 break;
 
             case STATE_STOPPED:
-                morphTo      = 1.0f;
-                morphCurrent = 1.0f;
-                pillT        = 0.0f;
-                phase        = PHASE_STOPPED_SHRINK;
-                resultsPage  = 0;
+                morphTo       = 1.0f;
+                morphCurrent  = 1.0f;
+                pillT         = 0.0f;
+                phase         = PHASE_STOPPED_SHRINK;
+                resultsPage   = 0;
+                stoppedOption = 0;
                 if (sessionStartMs > 0) {
                     sessionDurationSecs = (nowMs - sessionStartMs) / 1000;
                 }
@@ -580,8 +606,9 @@ class WhmModel {
             morphCurrent = 1.0f;
 
             if (retentionTimes.size() > 0) {
-                phase        = PHASE_STOPPED_IDLE;
-                phaseStartMs = nowMs;
+                phase         = PHASE_STOPPED_OPTIONS;
+                phaseStartMs  = nowMs;
+                stoppedOption = 0;
             } else {
                 switchState(STATE_START, nowMs);
             }

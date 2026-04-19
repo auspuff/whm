@@ -35,26 +35,32 @@ class WhmApp extends Application.AppBase {
         mTimer.stop();
         _stopSensors();
         if (mSession != null) {
-            _stopRecording();
+            _saveRecording();
         }
     }
 
     function onTick() as Void {
         mModel.tick(System.getTimer());
         var s = mModel.state;
-        if (s == STATE_BREATHING || s == STATE_RETENTION || s == STATE_RECOVERY) {
-            _startSensors();
-        } else {
-            _stopSensors();
-        }
         // Detect state transitions for recording lifecycle
         if (s != mLastState) {
             if (mLastState == STATE_START && s == STATE_BREATHING) {
                 _startRecording();
-            } else if (s == STATE_STOPPED && mSession != null) {
-                _stopRecording();
+            } else if (mLastState == STATE_STOPPED && s == STATE_START
+                    && mSession != null) {
+                // Left stopped without picking Save/Delete
+                // (empty-data auto-return, or SELECT during shrink) — discard
+                // so we don't leak a session that would crash the next start.
+                _discardRecording();
             }
+            // STOPPED → BREATHING (Continue) leaves the open session intact.
             mLastState = s;
+        }
+        // Sensors stay on as long as the FIT session is recording
+        if (mSession != null) {
+            _startSensors();
+        } else {
+            _stopSensors();
         }
         // Detect new lap (retention round completed)
         var rounds = mModel.retentionTimes.size();
@@ -105,7 +111,7 @@ class WhmApp extends Application.AppBase {
         session.start();
     }
 
-    function _stopRecording() as Void {
+    function _saveRecording() as Void {
         var session = mSession;
         if (session == null) { return; }
         var times = mModel.retentionTimes;
@@ -128,11 +134,30 @@ class WhmApp extends Application.AppBase {
             session.stop();
             session.save();
         }
+        _clearSession();
+    }
+
+    function _discardRecording() as Void {
+        var session = mSession;
+        if (session == null) { return; }
+        if (session.isRecording()) {
+            session.stop();
+            if (session has :discard) {
+                session.discard();
+            } else {
+                session.save();
+            }
+        }
+        _clearSession();
+    }
+
+    function _clearSession() as Void {
         mSession = null;
         mFieldRetention = null;
         mFieldRounds = null;
         mFieldAvgRetention = null;
         mFieldSpo2 = null;
+        mLastRoundCount = 0;
     }
 
     function _addLap() as Void {

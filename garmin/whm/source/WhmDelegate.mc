@@ -1,3 +1,4 @@
+import Toybox.Application;
 import Toybox.Lang;
 import Toybox.System;
 import Toybox.WatchUi;
@@ -25,7 +26,23 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
         } else if (state == STATE_BREATHING || state == STATE_RETENTION || state == STATE_RECOVERY) {
             mModel.switchState(STATE_STOPPED, now);
         } else if (state == STATE_STOPPED) {
-            mModel.switchState(STATE_START, now);
+            var phase = mModel.phase;
+            if (phase == PHASE_STOPPED_OPTIONS) {
+                var app = getApp();
+                var choice = mModel.stoppedOption;
+                if (choice == STOPPED_OPTION_SAVE) {
+                    app._saveRecording();
+                    mModel.showStoppedResults(now);
+                } else if (choice == STOPPED_OPTION_DELETE) {
+                    app._discardRecording();
+                    mModel.showStoppedResults(now);
+                } else {
+                    // CONTINUE — keep FIT session open, just go back to BREATHING
+                    mModel.switchState(STATE_BREATHING, now);
+                }
+            } else {
+                mModel.switchState(STATE_START, now);
+            }
         }
         return true;
     }
@@ -49,20 +66,32 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
         return false;
     }
 
-    // DOWN button — page through results when stopped
+    // DOWN button — page through results / move options highlight down
     function onNextPage() as Boolean {
-        if (mModel.state == STATE_STOPPED && mModel.phase == PHASE_STOPPED_IDLE) {
-            mModel.nextResultsPage();
-            return true;
+        if (mModel.state == STATE_STOPPED) {
+            var phase = mModel.phase;
+            if (phase == PHASE_STOPPED_IDLE) {
+                mModel.nextResultsPage();
+                return true;
+            } else if (phase == PHASE_STOPPED_OPTIONS) {
+                mModel.nextStoppedOption();
+                return true;
+            }
         }
         return false;
     }
 
-    // UP button — page back through results when stopped
+    // UP button — page back through results / move options highlight up
     function onPreviousPage() as Boolean {
-        if (mModel.state == STATE_STOPPED && mModel.phase == PHASE_STOPPED_IDLE) {
-            mModel.prevResultsPage();
-            return true;
+        if (mModel.state == STATE_STOPPED) {
+            var phase = mModel.phase;
+            if (phase == PHASE_STOPPED_IDLE) {
+                mModel.prevResultsPage();
+                return true;
+            } else if (phase == PHASE_STOPPED_OPTIONS) {
+                mModel.prevStoppedOption();
+                return true;
+            }
         }
         return false;
     }
