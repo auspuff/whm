@@ -62,16 +62,20 @@ class WhmView extends WatchUi.View {
 
         // ── Stopped idle — pageable results ─────────────────────────────────
         if (state == STATE_STOPPED && phase == PHASE_STOPPED_IDLE) {
-            var page = mModel.resultsPage;
-            if (page == 0) {
-                _drawSessionResults(dc, cx, cy, r);
-            } else if (page == 1) {
+            if (mModel.method == METHOD_478) {
                 _drawGraph(dc, cx, cy, r, mModel.hrSamples, mModel.getHrStats(), "Heart Rate", COLOR_RED);
             } else {
-                _drawGraph(dc, cx, cy, r, mModel.spo2Samples, mModel.getSpo2Stats(), "Pulse Ox", COLOR_BLUE);
+                var page = mModel.resultsPage;
+                if (page == 0) {
+                    _drawSessionResults(dc, cx, cy, r);
+                } else if (page == 1) {
+                    _drawGraph(dc, cx, cy, r, mModel.hrSamples, mModel.getHrStats(), "Heart Rate", COLOR_RED);
+                } else {
+                    _drawGraph(dc, cx, cy, r, mModel.spo2Samples, mModel.getSpo2Stats(), "Pulse Ox", COLOR_BLUE);
+                }
+                _drawPageDots(dc, cx, cy, r, page);
             }
             _drawSessionTime(dc, cx, cy, r);
-            _drawPageDots(dc, cx, cy, r, page);
             return;
         }
 
@@ -236,8 +240,24 @@ class WhmView extends WatchUi.View {
         var state = mModel.state;
         var phase = mModel.phase;
 
+        // Method-select overlay (after intro animation completes, before SELECT)
+        if (state == STATE_START && phase != PHASE_TRANSITION) {
+            dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, cy, Graphics.FONT_LARGE, mModel.getMethodLabel(),
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            _drawMethodDots(dc, cx, cy, r, mModel.method);
+            return;
+        }
+
         // Breath counter during breathing loop
         if (state == STATE_BREATHING && phase == PHASE_LOOP) {
+            if (mModel.method == METHOD_478) {
+                dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(cx, cy, Graphics.FONT_LARGE,
+                    mModel.subPhaseSecsRemaining.toString(),
+                    Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+                return;
+            }
             var count = mModel.getBreathCount();
             if (count > 0) {
                 dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
@@ -360,6 +380,28 @@ class WhmView extends WatchUi.View {
         dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, y, Graphics.FONT_SMALL, label,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    // ── Two-dot method indicator (START screen) ─────────────────────────────
+
+    function _drawMethodDots(
+        dc as Graphics.Dc, cx as Number, cy as Number,
+        r as Float, active as Number
+    ) as Void {
+        var dotR = 4;
+        var spacing = 18;
+        var y = (cy + r * 0.40f).toNumber();
+        var startX = cx - spacing / 2;
+
+        for (var i = 0; i < 2; i++) {
+            var x = startX + i * spacing;
+            if (i == active) {
+                dc.setColor(COLOR_WHITE_FULL, Graphics.COLOR_TRANSPARENT);
+            } else {
+                dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
+            }
+            dc.fillCircle(x, y, dotR);
+        }
     }
 
     // ── Page indicator dots ─────────────────────────────────────────────────

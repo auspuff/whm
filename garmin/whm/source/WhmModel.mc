@@ -8,6 +8,7 @@ const STATE_BREATHING = 1;
 const STATE_RETENTION = 2;
 const STATE_RECOVERY  = 3;
 const STATE_STOPPED   = 4;
+const STATE_READY     = 5;  // triangle shown, waiting for user to press START
 
 // ── Phase constants ──────────────────────────────────────────────────────────
 const PHASE_TRANSITION     = 0;
@@ -23,6 +24,16 @@ const STOPPED_OPTION_SAVE     = 0;
 const STOPPED_OPTION_DELETE   = 1;
 const STOPPED_OPTION_CONTINUE = 2;
 
+// ── Method constants ─────────────────────────────────────────────────────────
+const METHOD_WHM   = 0;
+const METHOD_478   = 1;
+const METHOD_COUNT = 2;
+
+// ── 4-7-8 sub-phase constants ────────────────────────────────────────────────
+const SUBPHASE_INHALE = 0;
+const SUBPHASE_HOLD   = 1;
+const SUBPHASE_EXHALE = 2;
+
 // ── Timing / animation constants ─────────────────────────────────────────────
 const TRANS_MS            = 2000;
 const RECOVERY_TRANS_MS   = 3000;
@@ -37,6 +48,13 @@ const IDLE_SCALE          = 0.3f;
 const INTRO_SCALE         = 0.005f;
 const RETENTION_HOLD_MS   = 1000;
 
+// ── 4-7-8 timing ─────────────────────────────────────────────────────────────
+const FOUR_SEVEN_EIGHT_INHALE_MS     = 4000;
+const FOUR_SEVEN_EIGHT_HOLD_MS       = 7000;
+const FOUR_SEVEN_EIGHT_EXHALE_MS     = 8000;
+const FOUR_SEVEN_EIGHT_CYCLE_MS      = 19000;
+const FOUR_SEVEN_EIGHT_TARGET_CYCLES = 4;
+
 // ── Polygon constants ────────────────────────────────────────────────────────
 const NUM_POINTS    = 120;
 const SMOOTH_WINDOW = 2;
@@ -46,8 +64,19 @@ const TINY_FLOAT    = 0.0000000001f;
 class WhmModel {
 
     // ── State machine ─────────────────────────────────────────────────────────
-    var state   as Number = STATE_START;
-    var phase   as Number = PHASE_TRANSITION;
+    var state     as Number = STATE_START;
+    var prevState as Number = STATE_START;
+    var phase     as Number = PHASE_TRANSITION;
+
+    // ── Method selection (persists across sessions) ─────────────────────────
+    var method as Number = METHOD_WHM;
+
+    // ── 4-7-8 per-cycle tracking ─────────────────────────────────────────────
+    var breathSubPhase        as Number = SUBPHASE_INHALE;
+    var subPhaseSecsRemaining as Number = 0;
+    var cyclesCompleted       as Number = 0;
+    var prevCycleElapsed      as Number = 0;
+    var prevSubPhase          as Number = SUBPHASE_INHALE;
 
     // ── Animation interpolation ───────────────────────────────────────────────
     var morphCurrent as Float = 1.0f;
@@ -319,14 +348,42 @@ class WhmModel {
     function getHrStats() as Array { return _sensorStats(hrSamples); }
     function getSpo2Stats() as Array { return _sensorStats(spo2Samples); }
 
+    // ── Method selection ────────────────────────────────────────────────────
+
+    function nextMethod() as Void {
+        method = (method + 1) % METHOD_COUNT;
+    }
+
+    function prevMethod() as Void {
+        method = (method + METHOD_COUNT - 1) % METHOD_COUNT;
+    }
+
+    function getMethodLabel() as String {
+        if (method == METHOD_478) { return "4-7-8"; }
+        return "WHM";
+    }
+
+    function getSubPhaseLabel() as String {
+        if (breathSubPhase == SUBPHASE_INHALE) { return "Inhale"; }
+        if (breathSubPhase == SUBPHASE_HOLD)   { return "Hold"; }
+        return "Exhale";
+    }
+
     // ── Results paging ──────────────────────────────────────────────────────
 
+    function getResultsPageCount() as Number {
+        if (method == METHOD_478) { return 1; }
+        return 3;
+    }
+
     function nextResultsPage() as Void {
-        resultsPage = (resultsPage + 1) % 3;
+        var n = getResultsPageCount();
+        resultsPage = (resultsPage + 1) % n;
     }
 
     function prevResultsPage() as Void {
-        resultsPage = (resultsPage + 2) % 3;
+        var n = getResultsPageCount();
+        resultsPage = (resultsPage + n - 1) % n;
     }
 
     // ── Stopped-options navigation ──────────────────────────────────────────
@@ -361,6 +418,7 @@ class WhmModel {
         stoppedInitMorph  = -1.0f;
         pillFrom  = pillT;
 
+        prevState     = state;
         state         = newState;
         phase         = PHASE_TRANSITION;
         phaseStartMs  = nowMs;
@@ -383,11 +441,28 @@ class WhmModel {
                 stoppedOption  = 0;
                 sessionStartMs      = 0;
                 sessionDurationSecs = 0;
+                cyclesCompleted     = 0;
+                prevCycleElapsed    = 0;
+                prevSubPhase        = SUBPHASE_INHALE;
+                break;
+
+            case STATE_READY:
+                morphTo = 0.0f;          // triangle
+                scaleTo = IDLE_SCALE;    // 30% scale
+                pillT   = 0.0f;
                 break;
 
             case STATE_BREATHING:
                 morphTo = 1.0f;
-                scaleTo = 1.0f;
+                if (method == METHOD_478) {
+                    // Ease to a small circle; first inhale grows from there.
+                    scaleTo = SMALL_SCALE;
+                    // Reset cycle tracking so Continue doesn't trigger a false wrap.
+                    prevCycleElapsed = 0;
+                    prevSubPhase     = SUBPHASE_EXHALE;
+                } else {
+                    scaleTo = 1.0f;
+                }
                 pillT   = 0.0f;
                 if (sessionStartMs == 0) {
                     sessionStartMs = nowMs;
@@ -451,25 +526,17 @@ class WhmModel {
     // ── Phase tick helpers ────────────────────────────────────────────────────
 
     function _tickTransition(elapsed as Number, nowMs as Number) as Void {
-        // START intro: two-stage animation
+        // START intro: tiny dot → full circle, then idle at full circle
         if (state == STATE_START) {
-            var growDur  = START_GROW_MS;
-            var morphDur = START_MORPH_MS;
+            var growDur = START_GROW_MS;
             if (elapsed < growDur) {
-                // Stage 1: tiny dot → full screen, stay circle
                 var t = easeInOutCubic(_clamp01(elapsed.toFloat() / growDur.toFloat()));
                 scaleCurrent = lerp(scaleFrom, 1.0f, t);
                 morphCurrent = 1.0f;
             } else {
-                // Stage 2: scale 1.0 → 0.3, morph circle → triangle
-                var e2 = elapsed - growDur;
-                var t = easeInOutCubic(_clamp01(e2.toFloat() / morphDur.toFloat()));
-                scaleCurrent = lerp(1.0f, scaleTo, t);
-                morphCurrent = lerp(1.0f, morphTo, t);
-                if (e2 >= morphDur) {
-                    scaleCurrent = scaleTo;
-                    morphCurrent = morphTo;
-                }
+                scaleCurrent = 1.0f;
+                morphCurrent = 1.0f;
+                phase = PHASE_LOOP;
             }
             return;
         }
@@ -490,6 +557,9 @@ class WhmModel {
             if (state == STATE_BREATHING) {
                 phase        = PHASE_LOOP;
                 phaseStartMs = nowMs;
+            } else if (state == STATE_READY) {
+                phase        = PHASE_LOOP;
+                phaseStartMs = nowMs;
             } else if (state == STATE_RECOVERY) {
                 phase        = PHASE_HOLD;
                 phaseStartMs = nowMs;
@@ -507,6 +577,11 @@ class WhmModel {
     }
 
     function _tickBreathingLoop(elapsed as Number, nowMs as Number) as Void {
+        if (method == METHOD_478) {
+            _tick478Loop(elapsed, nowMs);
+            return;
+        }
+
         var cycleMs      = TRANS_MS * 2;
         var maxElapsed   = BREATH_COUNT * cycleMs;
 
@@ -527,6 +602,61 @@ class WhmModel {
         }
         scaleCurrent  = lerp(SMALL_SCALE, 1.0f, t);
         morphCurrent  = 1.0f;
+    }
+
+    function _tick478Loop(elapsed as Number, nowMs as Number) as Void {
+        var cycleMs      = FOUR_SEVEN_EIGHT_CYCLE_MS;
+        var cycleElapsed = elapsed % cycleMs;
+
+        // Cycle wrap detection → increment count, maybe auto-stop
+        if (cycleElapsed < prevCycleElapsed) {
+            cyclesCompleted++;
+            if (cyclesCompleted >= FOUR_SEVEN_EIGHT_TARGET_CYCLES) {
+                prevCycleElapsed = 0;
+                prevSubPhase     = SUBPHASE_INHALE;
+                switchState(STATE_STOPPED, nowMs);
+                return;
+            }
+        }
+        prevCycleElapsed = cycleElapsed;
+
+        var inhaleEnd = FOUR_SEVEN_EIGHT_INHALE_MS;
+        var holdEnd   = FOUR_SEVEN_EIGHT_INHALE_MS + FOUR_SEVEN_EIGHT_HOLD_MS;
+
+        var sp = SUBPHASE_INHALE;
+        var scale = SMALL_SCALE;
+        var remainingMs = 0;
+        if (cycleElapsed < inhaleEnd) {
+            sp = SUBPHASE_INHALE;
+            var t = easeInOutCubic(cycleElapsed.toFloat() / inhaleEnd.toFloat());
+            scale = lerp(SMALL_SCALE, 1.0f, t);
+            remainingMs = inhaleEnd - cycleElapsed;
+        } else if (cycleElapsed < holdEnd) {
+            sp = SUBPHASE_HOLD;
+            scale = 1.0f;
+            remainingMs = holdEnd - cycleElapsed;
+        } else {
+            sp = SUBPHASE_EXHALE;
+            var t = easeInOutCubic((cycleElapsed - holdEnd).toFloat() / FOUR_SEVEN_EIGHT_EXHALE_MS.toFloat());
+            scale = lerp(1.0f, SMALL_SCALE, t);
+            remainingMs = cycleMs - cycleElapsed;
+        }
+
+        scaleCurrent = scale;
+        morphCurrent = 1.0f;
+        breathSubPhase = sp;
+        subPhaseSecsRemaining = (remainingMs + 999) / 1000;
+
+        if (sp != prevSubPhase) {
+            if (sp == SUBPHASE_INHALE) {
+                WhmTones.playInhaleCue();
+            } else if (sp == SUBPHASE_HOLD) {
+                WhmTones.playHoldCue();
+            } else {
+                WhmTones.playExhaleCue();
+            }
+            prevSubPhase = sp;
+        }
     }
 
     function _tickRecoveryHold(elapsed as Number, nowMs as Number) as Void {
@@ -605,7 +735,9 @@ class WhmModel {
             scaleCurrent = INTRO_SCALE;
             morphCurrent = 1.0f;
 
-            if (retentionTimes.size() > 0) {
+            var hasResults = (method == METHOD_WHM && retentionTimes.size() > 0)
+                          || (method == METHOD_478 && cyclesCompleted > 0);
+            if (hasResults) {
                 phase         = PHASE_STOPPED_OPTIONS;
                 phaseStartMs  = nowMs;
                 stoppedOption = 0;

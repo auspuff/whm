@@ -22,6 +22,8 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
         var now = System.getTimer();
         var state = mModel.state;
         if (state == STATE_START) {
+            mModel.switchState(STATE_READY, now);
+        } else if (state == STATE_READY) {
             mModel.switchState(STATE_BREATHING, now);
         } else if (state == STATE_BREATHING || state == STATE_RETENTION || state == STATE_RECOVERY) {
             mModel.switchState(STATE_STOPPED, now);
@@ -52,8 +54,14 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
         var now = System.getTimer();
         var state = mModel.state;
         var phase = mModel.phase;
-        if (state == STATE_BREATHING) {
+        if (state == STATE_READY) {
+            mModel.switchState(STATE_START, now);
+            return true;
+        } else if (state == STATE_BREATHING && mModel.method == METHOD_WHM) {
             mModel.switchState(STATE_RETENTION, now);
+            return true;
+        } else if (state == STATE_BREATHING && mModel.method == METHOD_478) {
+            // Consume — no phase-skip for 4-7-8, and don't let the system exit mid-session
             return true;
         } else if (state == STATE_RETENTION && phase == PHASE_RETENTION_IDLE) {
             mModel.switchState(STATE_RECOVERY, now);
@@ -68,6 +76,10 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
 
     // DOWN button — page through results / move options highlight down
     function onNextPage() as Boolean {
+        if (mModel.state == STATE_START && mModel.phase != PHASE_TRANSITION) {
+            mModel.nextMethod();
+            return true;
+        }
         if (mModel.state == STATE_STOPPED) {
             var phase = mModel.phase;
             if (phase == PHASE_STOPPED_IDLE) {
@@ -83,6 +95,10 @@ class WhmDelegate extends WatchUi.BehaviorDelegate {
 
     // UP button — page back through results / move options highlight up
     function onPreviousPage() as Boolean {
+        if (mModel.state == STATE_START && mModel.phase != PHASE_TRANSITION) {
+            mModel.prevMethod();
+            return true;
+        }
         if (mModel.state == STATE_STOPPED) {
             var phase = mModel.phase;
             if (phase == PHASE_STOPPED_IDLE) {

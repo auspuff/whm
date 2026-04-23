@@ -18,6 +18,7 @@ class WhmApp extends Application.AppBase {
     var mFieldRounds as FitContributor.Field? = null;
     var mFieldAvgRetention as FitContributor.Field? = null;
     var mFieldSpo2 as FitContributor.Field? = null;
+    var mFieldCycles as FitContributor.Field? = null;
     var mLastState as Number = STATE_START;
     var mLastRoundCount as Number = 0;
 
@@ -44,7 +45,8 @@ class WhmApp extends Application.AppBase {
         var s = mModel.state;
         // Detect state transitions for recording lifecycle
         if (s != mLastState) {
-            if (mLastState == STATE_START && s == STATE_BREATHING) {
+            if ((mLastState == STATE_START || mLastState == STATE_READY)
+                    && s == STATE_BREATHING) {
                 _startRecording();
             } else if (mLastState == STATE_STOPPED && s == STATE_START
                     && mSession != null) {
@@ -62,11 +64,13 @@ class WhmApp extends Application.AppBase {
         } else {
             _stopSensors();
         }
-        // Detect new lap (retention round completed)
-        var rounds = mModel.retentionTimes.size();
-        if (rounds > mLastRoundCount && mSession != null) {
-            _addLap();
-            mLastRoundCount = rounds;
+        // Detect new lap (retention round completed) — WHM only
+        if (mModel.method == METHOD_WHM) {
+            var rounds = mModel.retentionTimes.size();
+            if (rounds > mLastRoundCount && mSession != null) {
+                _addLap();
+                mLastRoundCount = rounds;
+            }
         }
         WatchUi.requestUpdate();
     }
@@ -89,21 +93,28 @@ class WhmApp extends Application.AppBase {
 
     function _startRecording() as Void {
         if (!(Toybox has :ActivityRecording)) { return; }
+        var name = (mModel.method == METHOD_478) ? "4-7-8" : "WHM";
         var session = ActivityRecording.createSession({
-            :name => "WHM",
+            :name => name,
             :sport => Activity.SPORT_TRAINING,
             :subSport => Activity.SUB_SPORT_BREATHING
         });
         mSession = session;
-        mFieldRetention = session.createField("retention_ms", 0,
-            FitContributor.DATA_TYPE_UINT32,
-            {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "ms"});
-        mFieldRounds = session.createField("rounds", 1,
-            FitContributor.DATA_TYPE_UINT16,
-            {:mesgType => FitContributor.MESG_TYPE_SESSION});
-        mFieldAvgRetention = session.createField("avg_retention_ms", 2,
-            FitContributor.DATA_TYPE_UINT32,
-            {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms"});
+        if (mModel.method == METHOD_WHM) {
+            mFieldRetention = session.createField("retention_ms", 0,
+                FitContributor.DATA_TYPE_UINT32,
+                {:mesgType => FitContributor.MESG_TYPE_LAP, :units => "ms"});
+            mFieldRounds = session.createField("rounds", 1,
+                FitContributor.DATA_TYPE_UINT16,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION});
+            mFieldAvgRetention = session.createField("avg_retention_ms", 2,
+                FitContributor.DATA_TYPE_UINT32,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms"});
+        } else {
+            mFieldCycles = session.createField("cycles_completed", 4,
+                FitContributor.DATA_TYPE_UINT16,
+                {:mesgType => FitContributor.MESG_TYPE_SESSION});
+        }
         mFieldSpo2 = session.createField("spo2", 3,
             FitContributor.DATA_TYPE_UINT8,
             {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "%"});
@@ -114,21 +125,26 @@ class WhmApp extends Application.AppBase {
     function _saveRecording() as Void {
         var session = mSession;
         if (session == null) { return; }
-        var times = mModel.retentionTimes;
-        var count = times.size();
-        var rounds = mFieldRounds;
-        if (rounds != null) { rounds.setData(count); }
-        var avg = mFieldAvgRetention;
-        if (avg != null) {
-            if (count > 0) {
-                var sum = 0;
-                for (var i = 0; i < count; i++) {
-                    sum += times[i] as Number;
+        if (mModel.method == METHOD_WHM) {
+            var times = mModel.retentionTimes;
+            var count = times.size();
+            var rounds = mFieldRounds;
+            if (rounds != null) { rounds.setData(count); }
+            var avg = mFieldAvgRetention;
+            if (avg != null) {
+                if (count > 0) {
+                    var sum = 0;
+                    for (var i = 0; i < count; i++) {
+                        sum += times[i] as Number;
+                    }
+                    avg.setData(sum / count);
+                } else {
+                    avg.setData(0);
                 }
-                avg.setData(sum / count);
-            } else {
-                avg.setData(0);
             }
+        } else {
+            var cycles = mFieldCycles;
+            if (cycles != null) { cycles.setData(mModel.cyclesCompleted); }
         }
         if (session.isRecording()) {
             session.stop();
@@ -157,6 +173,7 @@ class WhmApp extends Application.AppBase {
         mFieldRounds = null;
         mFieldAvgRetention = null;
         mFieldSpo2 = null;
+        mFieldCycles = null;
         mLastRoundCount = 0;
     }
 

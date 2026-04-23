@@ -60,6 +60,11 @@ module WhmTones {
         _vibrate(200);
     }
 
+    // 4-7-8 sub-phase cues — vibration only, kept subtle for eyes-closed practice
+    function playInhaleCue() as Void { _vibrate(100); }
+    function playHoldCue()   as Void { _vibrate(60);  }
+    function playExhaleCue() as Void { _vibrate(150); }
+
     function _vibrate(durationMs as Number) as Void {
         if (Attention has :vibrate) {
             var profile = [new Attention.VibeProfile(100, durationMs)] as Array<Attention.VibeProfile>;
