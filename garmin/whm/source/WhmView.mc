@@ -79,9 +79,16 @@ class WhmView extends WatchUi.View {
             return;
         }
 
-        // ── Pill shape (retention idle / retention sequence with pillT > 0) ──
+        // ── Pill shape (start/retention idle / transitions with pillT > 0) ──
         var pillT = mModel.pillT;
-        if (pillT > 0.0f && (state == STATE_RETENTION || state == STATE_RECOVERY)) {
+        var showPill = pillT > 0.0f && (
+            state == STATE_RETENTION ||
+            state == STATE_RECOVERY  ||
+            state == STATE_START     ||
+            state == STATE_READY     ||
+            state == STATE_BREATHING
+        );
+        if (showPill) {
             _drawPill(dc, cx, cy, r, pillT);
         } else {
             // ── Normal polygon shape ──────────────────────────────────────────
@@ -140,14 +147,19 @@ class WhmView extends WatchUi.View {
         dc.setPenWidth(3);
         dc.drawRoundedRectangle(x, y, currentW, currentH, currentR);
 
-        // Timer text inside pill — always visible during recovery, fade in otherwise
-        var showText = (mModel.state == STATE_RECOVERY) || (pillT > 0.3f);
-        if (showText) {
-            var secs     = mModel.getRetentionSeconds();
-            var timeStr  = mModel.formatSeconds(secs);
-            var font     = Graphics.FONT_LARGE;
+        // Text inside pill — method label on start, retention timer on
+        // retention/recovery, nothing during READY/BREATHING fade-out
+        var state = mModel.state;
+        var label = null;
+        if (state == STATE_START && pillT > 0.3f) {
+            label = mModel.getMethodLabel();
+        } else if ((state == STATE_RETENTION && pillT > 0.3f)
+                || state == STATE_RECOVERY) {
+            label = mModel.formatSeconds(mModel.getRetentionSeconds());
+        }
+        if (label != null) {
             dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy, font, timeStr,
+            dc.drawText(cx, cy, Graphics.FONT_LARGE, label,
                 Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
@@ -240,11 +252,9 @@ class WhmView extends WatchUi.View {
         var state = mModel.state;
         var phase = mModel.phase;
 
-        // Method-select overlay (after intro animation completes, before SELECT)
+        // Method-select overlay — method label lives inside the pill now,
+        // dots sit below it
         if (state == STATE_START && phase != PHASE_TRANSITION) {
-            dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy, Graphics.FONT_LARGE, mModel.getMethodLabel(),
-                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             _drawMethodDots(dc, cx, cy, r, mModel.method);
             return;
         }
@@ -299,7 +309,6 @@ class WhmView extends WatchUi.View {
     ) as Void {
         var minVal = stats[0] as Number;
         var maxVal = stats[1] as Number;
-        var avgVal = stats[2] as Number;
 
         // Title
         dc.setColor(COLOR_WHITE_85, Graphics.COLOR_TRANSPARENT);
@@ -330,13 +339,11 @@ class WhmView extends WatchUi.View {
         var yRange = yMax - yMin;
         if (yRange < 10) { yRange = 10; }
 
-        // Y-axis labels: max near top, avg in middle, min near bottom
+        // Y-axis labels: max near top, min near bottom
         var labelX = graphL - 12;
         var labelInset = (graphH * 0.25f).toNumber();
         dc.setColor(COLOR_WHITE_50, Graphics.COLOR_TRANSPARENT);
         dc.drawText(labelX, graphT + labelInset, labelFont, maxVal.toString(),
-            Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.drawText(labelX, (graphT + graphH / 2), labelFont, "~" + avgVal.toString(),
             Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.drawText(labelX, graphB - labelInset, labelFont, minVal.toString(),
             Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);

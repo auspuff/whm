@@ -44,6 +44,7 @@ const RECOVERY_SMALL_WAIT = 6000;
 const STOPPED_SHRINK_MS   = 1000;
 const START_GROW_MS       = 1200;
 const START_MORPH_MS      = 2000;
+const READY_EXPAND_MS     = 800;
 const IDLE_SCALE          = 0.3f;
 const INTRO_SCALE         = 0.005f;
 const RETENTION_HOLD_MS   = 1000;
@@ -330,19 +331,17 @@ class WhmModel {
     function _sensorStats(samples as Array) as Array {
         var min = 999;
         var max = 0;
-        var sum = 0;
-        var count = 0;
+        var hasAny = false;
         for (var i = 0; i < samples.size(); i++) {
             var v = samples[i] as Number;
             if (v > 0) {
                 if (v < min) { min = v; }
                 if (v > max) { max = v; }
-                sum += v;
-                count++;
+                hasAny = true;
             }
         }
-        if (count == 0) { return [0, 0, 0]; }
-        return [min, max, sum / count];
+        if (!hasAny) { return [0, 0]; }
+        return [min, max];
     }
 
     function getHrStats() as Array { return _sensorStats(hrSamples); }
@@ -526,17 +525,49 @@ class WhmModel {
     // ── Phase tick helpers ────────────────────────────────────────────────────
 
     function _tickTransition(elapsed as Number, nowMs as Number) as Void {
-        // START intro: tiny dot → full circle, then idle at full circle
+        // START intro: tiny dot → full circle → pill around method label
         if (state == STATE_START) {
-            var growDur = START_GROW_MS;
+            var growDur  = START_GROW_MS;
+            var morphDur = START_MORPH_MS;
             if (elapsed < growDur) {
                 var t = easeInOutCubic(_clamp01(elapsed.toFloat() / growDur.toFloat()));
                 scaleCurrent = lerp(scaleFrom, 1.0f, t);
                 morphCurrent = 1.0f;
+                pillT        = 0.0f;
+            } else if (elapsed < growDur + morphDur) {
+                var t = easeInOutCubic(_clamp01((elapsed - growDur).toFloat() / morphDur.toFloat()));
+                scaleCurrent = 1.0f;
+                morphCurrent = 1.0f;
+                pillT        = t;
             } else {
                 scaleCurrent = 1.0f;
                 morphCurrent = 1.0f;
-                phase = PHASE_LOOP;
+                pillT        = 1.0f;
+                phase        = PHASE_LOOP;
+            }
+            return;
+        }
+
+        // STATE_READY from pill: expand pill → full circle, then morph to triangle
+        if (state == STATE_READY && pillFrom > 0.0f) {
+            var expandDur = READY_EXPAND_MS;
+            var morphDur  = TRANS_MS;
+            if (elapsed < expandDur) {
+                var t = easeInOutCubic(_clamp01(elapsed.toFloat() / expandDur.toFloat()));
+                pillT        = lerp(pillFrom, 0.0f, t);
+                scaleCurrent = 1.0f;
+                morphCurrent = 1.0f;
+            } else if (elapsed < expandDur + morphDur) {
+                var t = easeInOutCubic(_clamp01((elapsed - expandDur).toFloat() / morphDur.toFloat()));
+                pillT        = 0.0f;
+                scaleCurrent = lerp(1.0f, scaleTo, t);
+                morphCurrent = lerp(1.0f, morphTo, t);
+            } else {
+                pillT        = 0.0f;
+                scaleCurrent = scaleTo;
+                morphCurrent = morphTo;
+                phase        = PHASE_LOOP;
+                phaseStartMs = nowMs;
             }
             return;
         }
@@ -546,7 +577,9 @@ class WhmModel {
         morphCurrent = lerp(morphFrom, morphTo, t);
         scaleCurrent = lerp(scaleFrom, scaleTo, t);
 
-        if ((state == STATE_RECOVERY || state == STATE_STOPPED) && pillFrom > 0.0f) {
+        if ((state == STATE_RECOVERY || state == STATE_STOPPED
+                || state == STATE_BREATHING)
+                && pillFrom > 0.0f) {
             pillT = lerp(pillFrom, 0.0f, t);
         }
 
